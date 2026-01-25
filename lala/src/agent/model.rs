@@ -17,7 +17,7 @@ impl ModelWrapper {
 }
 
 pub struct SessionWrapper {
-    pub session: llama_cpp::session,
+    pub session: llama_cpp::LlamaSession, // <-- fixed type
 }
 
 impl SessionWrapper {
@@ -27,6 +27,6 @@ impl SessionWrapper {
             .start_completing_with(StandardSampler::default(), max_tokens)?
             .into_strings();
 
-        Ok(tokens.join(""))
+        Ok(tokens.collect::<String>())
     }
 }
