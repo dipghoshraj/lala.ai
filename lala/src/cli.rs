@@ -9,7 +9,7 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
     let mut session = model.create_session()?;
 
 
-    println!("🦙 llama-agent ready (/exit to quit)");
+    println!("🦙 lala-agent ready (/exit to quit)");
 
     loop {
         print!(">> ");
