@@ -1,8 +1,6 @@
 use std::io::{self, Write};
 use crate::agent::model::ModelWrapper;
 use llama_cpp::standard_sampler::StandardSampler;
-use llama_cpp::{LlamaModel, LlamaParams, SessionParams};
-
 
 pub fn run(model_path: &str) -> anyhow::Result<()> {
     let model = ModelWrapper::load(model_path)?;
@@ -21,24 +19,31 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
         if input == "/exit" {
             break;
         }
-        
 
-        let prompt = if input.is_empty() {
-            "User: Hello, who are you?\nAssistant:".to_string()
-        } else {
-            format!("User: {}\nAssistant:", input)
-        };
+        let system_prompt = r#"<s>[INST] <<SYS>>
+            You are a friendly AI assistant. You speak naturally, use emojis sometimes, and greet users warmly.
+            You ask follow-up questions and make the conversation human-like.
+            <</SYS>>"#;
+
+        let prompt = format!("{} {} [/INST]", system_prompt, input);
+        
         session.session.advance_context(&prompt)?;
 
         // let response = session.complete(input, 512)?;
         let mut stream = session.session.start_completing_with(StandardSampler::default(), 512)?;
         println!("--- response ---");
+
+        let mut buffer = String::new();
         while let Some(token) = stream.next_token() {
-
-
             let text = model.model.token_to_piece(token);
-            print!("{}", text);
+            buffer.push_str(&text);
 
+            // Stop when stop token appears
+            if buffer.contains("[/INST]") {
+                break;
+            }
+
+            print!("{}", text);
             io::stdout().flush().unwrap();
         }
         println!();
