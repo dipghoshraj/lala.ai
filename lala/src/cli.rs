@@ -20,13 +20,14 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
             break;
         }
 
-        let system_prompt = r#"<s>[INST] <<SYS>>
-            You are a friendly AI assistant. You speak naturally, use emojis sometimes, and greet users warmly.
-            You ask follow-up questions and make the conversation human-like.
-            <</SYS>>"#;
+        println!("{}", input);
 
-        let prompt = format!("{} {} [/INST]", system_prompt, input);
-        
+        let prompt = format!(
+            "<s>[INST]\nYou are a friendly AI assistant. \
+        Explain things clearly and naturally. Respond in full sentences and use emojis occasionally.\n\n{}\n[/INST]",
+            input
+        );
+        // let prompt = format!("{} {}\n[/INST]", system_prompt, input);
         session.session.advance_context(&prompt)?;
 
         // let response = session.complete(input, 512)?;
