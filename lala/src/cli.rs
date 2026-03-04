@@ -11,15 +11,10 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
 
     loop {
         print!(">> ");
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let input = input.trim();
-
+        let input = get_input()?;
         if input == "/exit" {
             break;
         }
-
         println!("{}", input);
 
         let prompt = format!(
@@ -29,7 +24,6 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
         );
         session.session.advance_context(&prompt)?;
 
-        // let response = session.complete(input, 512)?;
         let mut stream = session.session.start_completing_with(StandardSampler::default(), 512)?;
         println!("--- response ---");
 
@@ -38,7 +32,6 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
             let text = model.model.token_to_piece(token);
             buffer.push_str(&text);
 
-            // Stop when stop token appears
             if buffer.contains("[/INST]") {
                 break;
             }
@@ -51,3 +44,12 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+
+fn get_input() -> io::Result<String> {
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
