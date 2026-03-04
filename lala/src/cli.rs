@@ -1,5 +1,6 @@
 use std::io::{self, Write};
 use crate::agent::model::ModelWrapper;
+use anyhow::Result;
 use llama_cpp::standard_sampler::StandardSampler;
 
 pub fn run(model_path: &str) -> anyhow::Result<()> {
@@ -16,12 +17,7 @@ pub fn run(model_path: &str) -> anyhow::Result<()> {
             break;
         }
         println!("{}", input);
-
-        let prompt = format!(
-            "<s>[INST]\nYou are a friendly AI assistant. \
-            Explain things clearly and naturally. Respond in full sentences and use emojis occasionally.\n\n{}\n[/INST]",
-            input
-        );
+        let prompt =build_prompt(&input)?;
         session.session.advance_context(&prompt)?;
 
         let mut stream = session.session.start_completing_with(StandardSampler::default(), 512)?;
@@ -53,3 +49,16 @@ fn get_input() -> io::Result<String> {
     Ok(input.trim().to_string())
 }
 
+
+fn build_prompt(prompt: &str) ->  Result<String> {
+
+    let system_prompt =  "<s>[INST]\nYou are a friendly AI assistant. \
+            Explain things clearly and naturally. Respond in full sentences and use emojis occasionally";
+    
+    let full_prompt = format!(
+        "{}\n\n{}\n[/INST]",
+        system_prompt,
+        prompt
+    );
+    Ok(full_prompt)
+}
