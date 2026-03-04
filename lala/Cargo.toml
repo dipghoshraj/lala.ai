@@ -7,5 +7,6 @@ edition = "2024"
 anyhow = "1.0"
 rustyline = "14.0"
 llama_cpp = "0.3"
+sqlx = "0.8.6"
 
 [build-dependencies]
