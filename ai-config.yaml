@@ -16,4 +16,4 @@ Models:
         description: "The maximum number of tokens to generate."
         type: "integer"
         default: 100
-    modelPath : "path/to/LLML/model"
+    modelPath : "E:\\model-guff\\mistral-7b-v0.1.Q4_K_M.gguf"
