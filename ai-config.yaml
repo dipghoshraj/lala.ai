@@ -1,0 +1,19 @@
+version: 1
+
+Modeltypes:
+  types: ["Reasoning", "Text Generation"]
+
+Models:
+  - name: "LLML"
+    description: "A large language model for reasoning and text generation."
+    type: "Reasoning"
+    parameters:
+      - name: "temperature"
+        description: "Controls the randomness of the output."
+        type: "float"
+        default: 0.7
+      - name: "max_tokens"
+        description: "The maximum number of tokens to generate."
+        type: "integer"
+        default: 100
+    modelPath : "path/to/LLML/model"
