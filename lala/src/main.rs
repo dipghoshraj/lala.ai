@@ -1,11 +1,12 @@
 mod agent;
 mod cli;
 
-
 fn main() -> anyhow::Result<()> {
-    let model_path = std::env::args()
+    // API URL from CLI arg, then env var, then default.
+    let api_url = std::env::args()
         .nth(1)
-        .expect("Usage: llama-agent <model.gguf>");
+        .or_else(|| std::env::var("LLML_API_URL").ok())
+        .unwrap_or_else(|| "http://localhost:3000".to_string());
 
-    cli::run(&model_path)
+    cli::run(&api_url)
 }
