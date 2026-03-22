@@ -11,7 +11,7 @@ use crate::agent::model::{ApiClient, ChatMessage};
 
 // Braille spinner — visible in any modern terminal (Windows Terminal, VS Code, etc.)
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPINNER_LABEL: &str = "thinking";
+const SPINNER_LABEL: &str = "thinking or you can say simulating pattern recognition";
 
 const SYSTEM_PROMPT: &str =
     "You are a friendly AI assistant named lala. \
