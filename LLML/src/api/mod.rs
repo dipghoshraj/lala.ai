@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::{error, info, instrument, warn};
@@ -6,12 +6,12 @@ use axum::{
     Router,
     extract::State,
     http::StatusCode,
-    routing::post,
+    routing::{get, post},
     Json,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::model::ModelRunner;
+use crate::model::ModelRegistry;
 
 // ── OpenAI-compatible request/response types ─────────────────────────────────
 
@@ -24,6 +24,8 @@ pub struct ChatMessage {
 
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
+    /// The model role to use: "reasoning" | "decision" (or any registered role).
+    /// Defaults to the first registered model when not supplied.
     pub model: Option<String>,
     pub messages: Vec<ChatMessage>,
     /// Overrides the model-config default when provided.
@@ -55,18 +57,26 @@ pub struct ChatResponse {
     pub usage: ChatUsage,
 }
 
+// ── /v1/models response ───────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub object: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelListResponse {
+    pub object: String,
+    pub data: Vec<ModelInfo>,
+}
+
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
 /// Converts an OpenAI `messages` array into a Mistral/Llama `[INST]` prompt.
-///
-/// - A leading `system` message is prepended to the first user turn.
-/// - `user` / `assistant` pairs build multi-turn history.
-/// - The final user message is left open (no trailing assistant token) so the
-///   model continues from there.
 pub fn build_prompt(messages: &[ChatMessage]) -> String {
     let mut result = String::new();
 
-    // Split off an optional leading system message.
     let (system_opt, turns) = match messages.first() {
         Some(m) if m.role == "system" => (Some(m.content.as_str()), &messages[1..]),
         _ => (None, messages),
@@ -93,10 +103,9 @@ pub fn build_prompt(messages: &[ChatMessage]) -> String {
                 }
             }
             "assistant" => {
-                // Closed assistant turn — part of history, not the live response.
                 result.push_str(&format!(" {} </s>", msg.content));
             }
-            _ => {} // ignore unknown roles
+            _ => {}
         }
     }
 
@@ -105,17 +114,34 @@ pub fn build_prompt(messages: &[ChatMessage]) -> String {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-pub fn create_router(runner: Arc<ModelRunner>) -> Router {
+pub fn create_router(registry: Arc<ModelRegistry>) -> Router {
     Router::new()
         .route("/v1/chat/completions", post(chat_completions))
-        .with_state(runner)
+        .route("/v1/models", get(list_models))
+        .with_state(registry)
 }
 
-// ── Handler ───────────────────────────────────────────────────────────────────
+// ── Handlers ──────────────────────────────────────────────────────────────────
 
-#[instrument(skip(runner, req), fields(model, message_count = req.messages.len(), max_tokens = ?req.max_tokens))]
+/// Returns the list of registered model roles (OpenAI-compatible format).
+async fn list_models(
+    State(registry): State<Arc<ModelRegistry>>,
+) -> Json<ModelListResponse> {
+    let data = registry
+        .roles()
+        .into_iter()
+        .map(|id| ModelInfo { id, object: "model".to_string() })
+        .collect();
+
+    Json(ModelListResponse {
+        object: "list".to_string(),
+        data,
+    })
+}
+
+#[instrument(skip(registry, req), fields(model = ?req.model, message_count = req.messages.len(), max_tokens = ?req.max_tokens))]
 async fn chat_completions(
-    State(runner): State<Arc<ModelRunner>>,
+    State(registry): State<Arc<ModelRegistry>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, String)> {
     if req.messages.is_empty() {
@@ -123,13 +149,34 @@ async fn chat_completions(
         return Err((StatusCode::BAD_REQUEST, "messages must not be empty".into()));
     }
 
-    let model_name = req.model.clone().unwrap_or_else(|| "LLML".to_string());
+    let resolved_role = match &req.model {
+        Some(role) => {
+            if registry.get(role).is_none() {
+                let available = registry.roles().join(", ");
+                warn!(role, available, "unknown model role requested");
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("unknown model role '{}'. Available: {}", role, available),
+                ));
+            }
+            role.clone()
+        }
+        None => {
+            registry
+                .first()
+                .map(|(r, _)| r.to_string())
+                .ok_or_else(|| {
+                    error!("no models registered in the registry");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "no models available".into())
+                })?
+        }
+    };
+
     let max_tokens = req.max_tokens;
-    let message_count = req.messages.len();
 
     info!(
-        model = %model_name,
-        message_count,
+        model = %resolved_role,
+        message_count = req.messages.len(),
         max_tokens = ?max_tokens,
         "received chat completion request"
     );
@@ -137,9 +184,13 @@ async fn chat_completions(
     let prompt = build_prompt(&req.messages);
     info!(prompt_len = prompt.len(), "prompt built");
 
-    // llama_cpp inference is blocking; run it off the async executor.
+    let registry_clone = Arc::clone(&registry);
+    let role_clone = resolved_role.clone();
     let output = tokio::task::spawn_blocking(move || {
-        runner.generate_from_prompt(&prompt, max_tokens)
+        registry_clone
+            .get(&role_clone)
+            .ok_or_else(|| anyhow::anyhow!("model '{}' disappeared from registry", role_clone))
+            .and_then(|runner| runner.generate_from_prompt(&prompt, max_tokens))
     })
     .await
     .map_err(|e| {
@@ -151,7 +202,7 @@ async fn chat_completions(
         (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
 
-    info!(output_len = output.len(), "inference returned, sending response");
+    info!(output_len = output.len(), model = %resolved_role, "inference complete");
 
     let created = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -162,7 +213,7 @@ async fn chat_completions(
         id: format!("chatcmpl-{}", uuid::Uuid::new_v4()),
         object: "chat.completion".to_string(),
         created,
-        model: model_name,
+        model: resolved_role,
         choices: vec![ChatChoice {
             index: 0,
             message: ChatMessage {

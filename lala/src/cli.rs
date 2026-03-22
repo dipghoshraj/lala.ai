@@ -78,7 +78,7 @@ pub fn run(api_url: &str) -> anyhow::Result<()> {
             io::stdout().flush().ok();
         });
 
-        let result = client.chat(&history, None);
+        let result = client.chat(&history, None, None);
 
         // Stop the spinner before printing anything.
         running.store(false, Ordering::Relaxed);

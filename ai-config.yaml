@@ -1,21 +1,22 @@
 version: 1
 
 Modeltypes:
-  types: ["Reasoning", "Text Generation"]
+  types: ["Reasoning", "Decision", "Text Generation"]
 
 Models:
-  - name: "LLML"
-    description: "A large language model for reasoning and text generation."
+  - name: "mistral-reasoning"
+    description: "A large language model for deep reasoning, analysis, and multi-step thinking."
     type: "Reasoning"
+    role: "reasoning"
     parameters:
       - name: "temperature"
-        description: "Controls the randomness of the output."
+        description: "Controls the randomness of the output. Higher = more creative."
         type: "float"
         default: 0.7
       - name: "max_tokens"
         description: "The maximum number of tokens to generate."
         type: "integer"
-        default: 100
+        default: 512
       - name: "n_gpu_layers"
         description: "Number of model layers to offload to GPU. Set to 99 to offload all layers (requires CUDA/Metal build). Set to 0 for CPU-only."
         type: "integer"
@@ -25,11 +26,42 @@ Models:
         type: "integer"
         default: 4
       - name: "n_ctx"
-        description: "Context window size in tokens. Smaller = faster KV cache. Use 512 for short queries, 2048 for longer conversations."
+        description: "Context window size in tokens. Use 2048+ for long reasoning chains."
         type: "integer"
-        default: 512
+        default: 2048
       - name: "n_batch"
         description: "Batch size for prompt evaluation. Larger = faster prompt processing. 512 is recommended."
         type: "integer"
         default: 512
-    modelPath : "E:\\model-guff\\mistral-7b-v0.1.Q4_K_M.gguf"
+    modelPath: "E:\\model-guff\\mistral-7b-v0.1.Q4_K_M.gguf"
+
+  - name: "mistral-decision"
+    description: "A model optimised for concise, deterministic decision-making and action selection."
+    type: "Decision"
+    role: "decision"
+    parameters:
+      - name: "temperature"
+        description: "Lower temperature for more deterministic, decisive outputs."
+        type: "float"
+        default: 0.3
+      - name: "max_tokens"
+        description: "The maximum number of tokens to generate. Decisions are short."
+        type: "integer"
+        default: 256
+      - name: "n_gpu_layers"
+        description: "Number of model layers to offload to GPU. Set to 99 to offload all layers (requires CUDA/Metal build). Set to 0 for CPU-only."
+        type: "integer"
+        default: 0
+      - name: "n_threads"
+        description: "Number of CPU threads for token generation. 0 = auto-detect."
+        type: "integer"
+        default: 4
+      - name: "n_ctx"
+        description: "Context window size in tokens. Smaller for faster decisions."
+        type: "integer"
+        default: 512
+      - name: "n_batch"
+        description: "Batch size for prompt evaluation."
+        type: "integer"
+        default: 512
+    modelPath: "E:\\model-guff\\mistral-7b-v0.1.Q4_K_M.gguf"

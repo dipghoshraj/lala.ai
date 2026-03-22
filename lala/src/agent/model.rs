@@ -9,6 +9,9 @@ pub struct ChatMessage {
 
 #[derive(Debug, Serialize)]
 struct ChatRequest<'a> {
+    /// The model role to invoke on the LLML server: "reasoning" | "decision".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
     messages: &'a [ChatMessage],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
@@ -27,6 +30,22 @@ struct AssistantMessage {
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+}
+
+/// Logical model roles exposed by the LLML server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelRole {
+    Reasoning,
+    Decision,
+}
+
+impl ModelRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModelRole::Reasoning => "reasoning",
+            ModelRole::Decision => "decision",
+        }
+    }
 }
 
 /// HTTP client that talks to the LLML API server.
@@ -49,13 +68,18 @@ impl ApiClient {
 
     /// Send a chat request with the full conversation history and return
     /// the assistant's reply text.
+    ///
+    /// `model_role` selects which model to use on the LLML server.
+    /// Pass `None` to let the server choose the default (first registered) model.
     pub fn chat(
         &self,
         messages: &[ChatMessage],
         max_tokens: Option<usize>,
+        model_role: Option<ModelRole>,
     ) -> anyhow::Result<String> {
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let body = ChatRequest { messages, max_tokens };
+        let role_str = model_role.map(|r| r.as_str());
+        let body = ChatRequest { model: role_str, messages, max_tokens };
 
         let resp: ChatResponse = self
             .client
@@ -73,5 +97,23 @@ impl ApiClient {
             .next()
             .map(|c| c.message.content.trim().to_string())
             .ok_or_else(|| anyhow::anyhow!("empty choices in API response"))
+    }
+
+    /// Convenience wrapper — uses the `reasoning` model.
+    pub fn reason(
+        &self,
+        messages: &[ChatMessage],
+        max_tokens: Option<usize>,
+    ) -> anyhow::Result<String> {
+        self.chat(messages, max_tokens, Some(ModelRole::Reasoning))
+    }
+
+    /// Convenience wrapper — uses the `decision` model.
+    pub fn decide(
+        &self,
+        messages: &[ChatMessage],
+        max_tokens: Option<usize>,
+    ) -> anyhow::Result<String> {
+        self.chat(messages, max_tokens, Some(ModelRole::Decision))
     }
 }

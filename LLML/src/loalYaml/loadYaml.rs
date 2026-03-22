@@ -22,6 +22,10 @@ pub struct Model {
     pub description: String,
     #[serde(rename = "type")]
     pub model_type: String,
+    /// Logical role for this model, e.g. "reasoning" or "decision".
+    /// Falls back to the model `name` when absent in the YAML.
+    #[serde(default)]
+    pub role: String,
     pub parameters: Vec<Parameter>,
     #[serde(rename = "modelPath")]
     pub model_path: String,

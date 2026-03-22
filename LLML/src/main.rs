@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
 use loalYaml::loadYaml::load_config;
-use model::{ModelParams, ModelRunner};
+use model::{ModelRunner, ModelRegistry, params_from_config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,50 +26,37 @@ async fn main() -> anyhow::Result<()> {
     let config_path = "../ai-config.yaml";
     let config = load_config(config_path).map_err(|e| anyhow::anyhow!(e))?;
 
-    let model_cfg = config.models.first()
-        .ok_or_else(|| anyhow::anyhow!("No models defined in config"))?;
+    if config.models.is_empty() {
+        return Err(anyhow::anyhow!("No models defined in ai-config.yaml"));
+    }
 
-    let temperature = model_cfg.parameters.iter()
-        .find(|p| p.name == "temperature")
-        .and_then(|p| p.default.as_f64())
-        .unwrap_or(0.7) as f32;
+    // Load every model declared in the config and register it by role.
+    let mut registry = ModelRegistry::new();
+    for model_cfg in &config.models {
+        let params = params_from_config(&model_cfg.parameters);
 
-    let max_tokens = model_cfg.parameters.iter()
-        .find(|p| p.name == "max_tokens")
-        .and_then(|p| p.default.as_u64())
-        .unwrap_or(100) as usize;
+        // Key: explicit role field, or fall back to the model name.
+        let role = if model_cfg.role.is_empty() {
+            model_cfg.name.clone()
+        } else {
+            model_cfg.role.clone()
+        };
 
-    let n_gpu_layers = model_cfg.parameters.iter()
-        .find(|p| p.name == "n_gpu_layers")
-        .and_then(|p| p.default.as_u64())
-        .unwrap_or(0) as u32;
+        info!(role, name = %model_cfg.name, path = %model_cfg.model_path, "loading model");
+        let runner = ModelRunner::load(&model_cfg.model_path, params)?;
+        registry.register(role, runner);
+    }
 
-    let n_threads = model_cfg.parameters.iter()
-        .find(|p| p.name == "n_threads")
-        .and_then(|p| p.default.as_u64())
-        .unwrap_or(0) as u32;
+    let available_roles = registry.roles().join(", ");
+    info!(roles = %available_roles, "all models loaded");
 
-    let n_ctx = model_cfg.parameters.iter()
-        .find(|p| p.name == "n_ctx")
-        .and_then(|p| p.default.as_u64())
-        .unwrap_or(2048) as u32;
-
-    let n_batch = model_cfg.parameters.iter()
-        .find(|p| p.name == "n_batch")
-        .and_then(|p| p.default.as_u64())
-        .unwrap_or(512) as u32;
-
-    // Load the model once; wrap in Arc for shared access across requests.
-    let runner = Arc::new(ModelRunner::load(
-        &model_cfg.model_path,
-        ModelParams { temperature, max_tokens, n_gpu_layers, n_threads, n_ctx, n_batch },
-    )?);
-
-    let app = api::create_router(runner);
+    let registry = Arc::new(registry);
+    let app = api::create_router(registry);
     let addr = "0.0.0.0:3000";
 
     info!(addr, "LLML API server starting");
-    info!("  POST /v1/chat/completions  — OpenAI-compatible chat endpoint");
+    info!("  POST /v1/chat/completions  — OpenAI-compatible chat (pass \"model\": \"<role>\" to select)");
+    info!("  GET  /v1/models            — list registered model roles");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
