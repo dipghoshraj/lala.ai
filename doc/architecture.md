@@ -1,6 +1,6 @@
 # lala.ai — System Architecture
 
-> **Current state:** Phase 0 in progress — two-binary system (`lala` CLI client + `LLML` inference server) communicating over HTTP. PostgreSQL/pgvector is provisioned but not yet wired into the live request loop.
+> **Current state:** Phase 0 in progress — two-binary system (`lala` CLI client + `LLML` inference server) communicating over HTTP. LLML now supports multiple model roles (`reasoning` / `decision`) with per-request temperature overrides. PostgreSQL/pgvector is provisioned but not yet wired into the live request loop.
 
 ---
 
@@ -42,17 +42,19 @@ graph TD
     User["👤 User (terminal)"]
     Lala["lala\nCLI binary"]
     LLML["LLML\nInference server\n:3000"]
-    Config["ai-config.yaml"]
+    Config["ai-config.yaml\n(2 model roles)"]
     GGUF["*.gguf model files\n(local filesystem)"]
     DB[("PostgreSQL\n+ pgvector\n:5432")]
+    Registry["ModelRegistry\nrole → ModelRunner"]
 
     User -->|"stdin / rustyline"| Lala
-    Lala -->|"POST /v1/chat/completions\n(JSON over HTTP)"| LLML
-    LLML -->|response JSON| Lala
-    Lala -->|print reply| User
+    Lala -->|"POST /v1/chat/completions\n{model: 'reasoning'|'decision', ...}"| LLML
+    LLML -->|"response JSON"| Lala
+    Lala -->|"print reply"| User
 
     Config -->|"read on startup"| LLML
-    GGUF -->|"mmap via llama_cpp"| LLML
+    GGUF -->|"mmap via llama_cpp"| Registry
+    LLML --> Registry
 
     DB -.->|"planned — RAG + memory"| Lala
 
@@ -121,8 +123,8 @@ sequenceDiagram
     else normal message
         cli->>cli: push ChatMessage{role:"user"} to history
         cli->>spinner: spawn background thread
-        cli->>ApiClient: chat(&history, None, None)
-        ApiClient->>LLML: POST /v1/chat/completions
+        cli->>ApiClient: chat(&history, None, None)\n[model_role=None → server default]
+        ApiClient->>LLML: POST /v1/chat/completions\n{messages:[...]}
         LLML-->>ApiClient: ChatResponse JSON
         ApiClient-->>cli: Ok(reply) or Err(e)
         cli->>spinner: set running=false
@@ -149,11 +151,34 @@ index 2   { role: "assistant", content: "..." }
 
 The entire vector is sent on every request so the model maintains multi-turn context. `/clear` truncates back to `len == 1`.
 
+### ApiClient — model role selection
+
+`ApiClient` in `lala/src/agent/model.rs` exposes three call paths:
+
+| Method | `"model"` field sent | Temperature used |
+|--------|---------------------|-----------------|
+| `chat(&msgs, max_tokens, None)` | omitted → server picks first registered | model config default |
+| `reason(&msgs, max_tokens)` | `"reasoning"` | 0.7 (from config) |
+| `decide(&msgs, max_tokens)` | `"decision"` | 0.3 (from config) |
+
+`cli.rs` currently calls `chat(…, None, None)` (server default). The `reason()` / `decide()` methods are ready for the Phase 0 planner loop — see §6.
+
 ---
 
 ## 5. LLML — Inference Server Flow
 
-### 5.1 Startup
+### 5.1 Multi-Model Configuration (`ai-config.yaml`)
+
+LLML loads **all** models declared in `ai-config.yaml` at startup and stores them in a `ModelRegistry` keyed by `role`. Two roles are defined by default:
+
+| Role | Type | Temperature | `n_ctx` | Purpose |
+|------|------|-------------|---------|---------|
+| `reasoning` | Reasoning | 0.7 | 2048 | Deep analysis, multi-step thinking |
+| `decision` | Decision | 0.3 | 512 | Short, deterministic action selection |
+
+The `role` field in each model entry is the API-facing key. Both roles currently load the same GGUF file — swap `modelPath` independently to use different checkpoints.
+
+### 5.2 Startup
 
 ```mermaid
 flowchart TD
@@ -162,9 +187,9 @@ flowchart TD
     C --> D{models empty?}
     D -- yes --> E[return Err — exit]
     D -- no --> F[for each model entry]
-    F --> G[params_from_config]
+    F --> G[params_from_config\nreads temperature, max_tokens,\nn_gpu_layers, n_threads, n_ctx, n_batch]
     G --> H[ModelRunner::load GGUF file]
-    H --> I[registry.register role runner]
+    H --> I["registry.register(role, runner)"]
     I --> F
     F --> J[Arc wrap registry]
     J --> K[api::create_router registry]
@@ -172,7 +197,7 @@ flowchart TD
     L --> M[axum::serve — event loop]
 ```
 
-### 5.2 Request: POST /v1/chat/completions
+### 5.3 Request: POST /v1/chat/completions
 
 ```mermaid
 sequenceDiagram
@@ -182,19 +207,21 @@ sequenceDiagram
     participant blocking as spawn_blocking thread
     participant runner as ModelRunner
 
-    lala->>axum: POST /v1/chat/completions\n{model?, messages, max_tokens?}
+    lala->>axum: POST /v1/chat/completions\n{model?, messages, max_tokens?, temperature?}
 
     axum->>axum: validate messages not empty
-    axum->>registry: resolve role (req.model or first())
-    registry-->>axum: &ModelRunner (or 400/500)
+    axum->>registry: resolve role\n(req.model → exact lookup, or first())
+    registry-->>axum: &ModelRunner  OR  400 unknown role / 500 empty registry
 
-    axum->>axum: build_prompt(messages) → String
+    axum->>axum: build_prompt(messages)\nMistral [INST]...[/INST] format
 
-    axum->>blocking: spawn_blocking closure
-    blocking->>runner: generate_from_prompt(prompt, max_tokens)
-    runner->>runner: model.create_session(SessionParams)
-    runner->>runner: session.advance_context(prompt)
-    runner->>runner: collect tokens until max or [/INST]
+    axum->>blocking: spawn_blocking closure\n(prompt, max_tokens, temperature)
+    blocking->>runner: generate_from_prompt(prompt, max_tokens, temperature)
+    note over runner: temperature = req.temperature\n  ?? model config default
+    runner->>runner: create_session(SessionParams)
+    runner->>runner: advance_context(prompt)
+    runner->>runner: StandardSampler with resolved temperature
+    runner->>runner: collect tokens until max or [/INST] stop
     runner-->>blocking: Ok(output_string)
     blocking-->>axum: output_string
 
@@ -266,7 +293,7 @@ classDiagram
         +LlamaModel model
         -ModelParams params
         +load(path, params) ModelRunner
-        +generate_from_prompt(prompt, max_tokens) String
+        +generate_from_prompt(prompt, max_tokens, temperature) String
     }
     class ModelParams {
         +f32 temperature
@@ -321,8 +348,79 @@ Both endpoints live on `LLML` at port `3000`.
 | `messages` | yes | Non-empty array. First element may be `system`. |
 | `model` | no | Role key from registry. Omit to use first registered model. |
 | `max_tokens` | no | Overrides the config default for this request. |
+| `temperature` | no | Overrides the model config default for this request (0.0–2.0). |
 
 **Response:** OpenAI-compatible `ChatResponse` with `choices[0].message.content`.
+
+#### curl examples
+
+**1. Default model (server picks first registered — `reasoning`):**
+```sh
+curl -s http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      { "role": "user", "content": "What is Rust?" }
+    ]
+  }' | jq '.choices[0].message.content'
+```
+
+**2. Explicit `reasoning` model with a system prompt and multi-turn history:**
+```sh
+curl -s http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "reasoning",
+    "messages": [
+      { "role": "system",    "content": "You are a helpful AI assistant named lala." },
+      { "role": "user",      "content": "Explain ownership in Rust." }
+    ],
+    "max_tokens": 512
+  }' | jq '.choices[0].message.content'
+```
+
+**3. `decision` model — short, deterministic output:**
+```sh
+curl -s http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "decision",
+    "messages": [
+      { "role": "user", "content": "Should I use Vec or LinkedList for a stack in Rust? Answer in one sentence." }
+    ],
+    "max_tokens": 64
+  }' | jq '.choices[0].message.content'
+```
+
+**4. Override temperature at request time:**
+```sh
+curl -s http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "reasoning",
+    "messages": [
+      { "role": "user", "content": "Write a creative haiku about memory safety." }
+    ],
+    "max_tokens": 100,
+    "temperature": 1.2
+  }' | jq '.choices[0].message.content'
+```
+
+**5. Multi-turn conversation (pass full history on each request):**
+```sh
+curl -s http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "reasoning",
+    "messages": [
+      { "role": "system",    "content": "You are lala, a concise technical assistant." },
+      { "role": "user",      "content": "What is a borrow checker?" },
+      { "role": "assistant", "content": "The borrow checker is a Rust compiler component that enforces memory safety rules at compile time." },
+      { "role": "user",      "content": "How does it relate to lifetimes?" }
+    ],
+    "max_tokens": 256
+  }' | jq '.choices[0].message.content'
+```
 
 ### GET `/v1/models`
 
@@ -335,6 +433,12 @@ Returns all registered roles. Example:
     { "id": "reasoning", "object": "model" }
   ]
 }
+```
+
+#### curl example
+
+```sh
+curl -s http://localhost:3000/v1/models | jq .
 ```
 
 ---
@@ -417,11 +521,14 @@ flowchart TD
 | Concern | Current | Target (Phase 0) |
 |---------|---------|-----------------|
 | REPL / input | `cli.rs` direct loop | Interface Layer calls `Agent::run()` |
+| Multi-model routing (server) | `ModelRegistry` + role-based routing ✅ | Done |
+| Per-request temperature (server) | Wired through `generate_from_prompt` ✅ | Done |
+| Role selection (client) | `reason()` / `decide()` methods exist ✅ | Needs planner to call them |
+| Two-step agent loop | Single `chat(…, None, None)` call | Agent: `reason()` → parse → `decide()` |
 | Prompt building | `api/mod.rs build_prompt()` in LLML | Agent Layer (Executor/Reasoner) |
-| LLM call | `ApiClient::chat()` in CLI | Model Layer `generate()` |
 | Retrieval | None | RAG Layer `retrieve(query, k)` |
 | Document ingestion | None | RAG Layer `store(text)` |
-| DB access | `db/connection.rs` exists but unused | RAG Layer only via `PgPool` |
+| DB access | `db/connection.rs` declared but unused | RAG Layer only via `PgPool` |
 
 ---
 

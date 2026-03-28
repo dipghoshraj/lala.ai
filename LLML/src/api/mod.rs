@@ -186,11 +186,12 @@ async fn chat_completions(
 
     let registry_clone = Arc::clone(&registry);
     let role_clone = resolved_role.clone();
+    let temperature = req.temperature;
     let output = tokio::task::spawn_blocking(move || {
         registry_clone
             .get(&role_clone)
             .ok_or_else(|| anyhow::anyhow!("model '{}' disappeared from registry", role_clone))
-            .and_then(|runner| runner.generate_from_prompt(&prompt, max_tokens))
+            .and_then(|runner| runner.generate_from_prompt(&prompt, max_tokens, temperature))
     })
     .await
     .map_err(|e| {

@@ -55,15 +55,17 @@ impl ModelRunner {
     }
 
     /// Run inference on a fully-formed prompt string.
-    /// `max_tokens` overrides the config default when supplied by the caller.
-    #[instrument(skip(self, prompt), fields(prompt_len = prompt.len(), max_tokens))]
+    /// `max_tokens` and `temperature` override the config defaults when supplied by the caller.
+    #[instrument(skip(self, prompt), fields(prompt_len = prompt.len(), max_tokens, temperature))]
     pub fn generate_from_prompt(
         &self,
         prompt: &str,
         max_tokens: Option<usize>,
+        temperature: Option<f32>,
     ) -> anyhow::Result<String> {
         let max = max_tokens.unwrap_or(self.params.max_tokens);
-        debug!(prompt_len = prompt.len(), max_tokens = max, "creating inference session");
+        let temp = temperature.unwrap_or(self.params.temperature);
+        debug!(prompt_len = prompt.len(), max_tokens = max, temperature = temp, "creating inference session");
 
         // Resolve thread count: 0 means auto-detect from available CPU cores.
         let n_threads = if self.params.n_threads == 0 {
@@ -94,14 +96,30 @@ impl ModelRunner {
                 e
             })?;
 
+        let sampler = StandardSampler::new_softmax(
+            vec![
+                llama_cpp::standard_sampler::SamplerStage::RepetitionPenalty {
+                    repetition_penalty: 1.1,
+                    frequency_penalty: 0.0,
+                    presence_penalty: 0.0,
+                    last_n: 64,
+                },
+                llama_cpp::standard_sampler::SamplerStage::TopK(40),
+                llama_cpp::standard_sampler::SamplerStage::TopP(0.95),
+                llama_cpp::standard_sampler::SamplerStage::MinP(0.05),
+                llama_cpp::standard_sampler::SamplerStage::Temperature(temp),
+            ],
+            1,
+        );
+
         let mut stream = session
-            .start_completing_with(StandardSampler::default(), max)
+            .start_completing_with(sampler, max)
             .map_err(|e| {
                 error!(error = %e, "failed to start completion stream");
                 e
             })?;
 
-        info!(max_tokens = max, "inference started");
+        info!(max_tokens = max, temperature = temp, "inference started");
         let mut output = String::new();
         let mut token_count: usize = 0;
 
