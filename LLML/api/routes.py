@@ -186,7 +186,7 @@ async def list_models(request: Request) -> JSONResponse:
     return JSONResponse({"object": "list", "data": data})
 
 
-@router.post("/v1/chat/completions")
+@router.post("/v1/chat/completions", response_model=None)
 async def chat_completions(
     request: Request,
     req: ChatRequest,

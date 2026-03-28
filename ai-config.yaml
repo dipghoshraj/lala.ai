@@ -80,4 +80,4 @@ Models:
         description: "Pin model weights in RAM. 1 = enabled."
         type: "integer"
         default: 1
-    modelPath: "D:\\models\\SmolLM2-1.7B-Instruct-Q4_K_M.gguf"
+    modelPath: "D:\\models\\qwen2.5-3b-instruct-q4_k_m.gguf"
