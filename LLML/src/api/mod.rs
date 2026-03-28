@@ -73,6 +73,78 @@ pub struct ModelListResponse {
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
 
+/// Conservative token estimator: ~3 bytes per token.
+/// Actual BPE token counts are usually lower, so this errs on the safe side.
+#[inline]
+fn estimate_tokens(text: &str) -> usize {
+    (text.len() + 2) / 3
+}
+
+/// Trim the oldest non-system turns until the estimated prompt token count
+/// fits within the context budget: `n_ctx - max_tokens - safety_margin`.
+///
+/// Rules:
+///   - System messages are always kept.
+///   - Turns are dropped oldest-first in pairs (user + assistant) to keep
+///     the conversation structure syntactically valid.
+///   - The final user message is never dropped — at worst the system prompt
+///     + one user message is all that remains.
+fn slide_messages(
+    messages: &[ChatMessage],
+    n_ctx: u32,
+    max_tokens: usize,
+) -> Vec<ChatMessage> {
+    // Reserve space for generation output + a small safety margin.
+    const SAFETY_MARGIN: usize = 32;
+    let budget = (n_ctx as usize)
+        .saturating_sub(max_tokens)
+        .saturating_sub(SAFETY_MARGIN);
+
+    let (system, mut turns): (Vec<_>, Vec<_>) = messages
+        .iter()
+        .cloned()
+        .partition(|m| m.role == "system");
+
+    loop {
+        let candidate: Vec<ChatMessage> = system
+            .iter()
+            .chain(turns.iter())
+            .cloned()
+            .collect();
+
+        let prompt = build_prompt(&candidate);
+        let estimated = estimate_tokens(&prompt);
+
+        if estimated <= budget {
+            return candidate;
+        }
+
+        // Nothing left to drop — return what we have and let the model
+        // report the error rather than silently mangling the request.
+        if turns.len() <= 1 {
+            warn!(
+                estimated,
+                budget,
+                "context still over budget after full slide; proceeding anyway"
+            );
+            return candidate;
+        }
+
+        // Drop the oldest pair (user + assistant) when possible, otherwise
+        // just the oldest single message, to preserve conversation structure.
+        if turns[0].role == "user"
+            && turns.len() > 1
+            && turns[1].role == "assistant"
+        {
+            let dropped = turns.drain(0..2).count();
+            warn!(dropped, remaining = turns.len(), "sliding context window: dropped turn pair");
+        } else {
+            turns.drain(0..1);
+            warn!(remaining = turns.len(), "sliding context window: dropped single message");
+        }
+    }
+}
+
 /// Converts an OpenAI `messages` array into a Mistral/Llama `[INST]` prompt.
 pub fn build_prompt(messages: &[ChatMessage]) -> String {
     let mut result = String::new();
@@ -173,25 +245,37 @@ async fn chat_completions(
     };
 
     let max_tokens = req.max_tokens;
+    let messages = req.messages;
+    let temperature = req.temperature;
 
     info!(
         model = %resolved_role,
-        message_count = req.messages.len(),
+        message_count = messages.len(),
         max_tokens = ?max_tokens,
         "received chat completion request"
     );
 
-    let prompt = build_prompt(&req.messages);
-    info!(prompt_len = prompt.len(), "prompt built");
-
     let registry_clone = Arc::clone(&registry);
     let role_clone = resolved_role.clone();
-    let temperature = req.temperature;
     let output = tokio::task::spawn_blocking(move || {
-        registry_clone
+        let runner = registry_clone
             .get(&role_clone)
-            .ok_or_else(|| anyhow::anyhow!("model '{}' disappeared from registry", role_clone))
-            .and_then(|runner| runner.generate_from_prompt(&prompt, max_tokens, temperature))
+            .ok_or_else(|| anyhow::anyhow!("model '{}' disappeared from registry", role_clone))?;
+
+        // Resolve the generation budget, then slide the context window so the
+        // prompt always fits within the model's n_ctx.
+        let gen_budget = max_tokens.unwrap_or_else(|| runner.max_tokens_default());
+        let slid = slide_messages(&messages, runner.n_ctx(), gen_budget);
+        let prompt = build_prompt(&slid);
+
+        info!(
+            original_turns = messages.len(),
+            slid_turns = slid.len(),
+            prompt_len = prompt.len(),
+            "prompt built after context slide"
+        );
+
+        runner.generate_from_prompt(&prompt, max_tokens, temperature)
     })
     .await
     .map_err(|e| {

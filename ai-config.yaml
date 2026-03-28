@@ -22,18 +22,26 @@ Models:
         type: "integer"
         default: 0
       - name: "n_threads"
-        description: "Number of CPU threads for token generation. Set to your physical core count (not logical/HT). 0 = auto-detect."
+        description: "CPU threads for token generation (autoregressive decode). Set to physical core count. 0 = auto-detect."
         type: "integer"
-        default: 4
+        default: 0
+      - name: "n_threads_batch"
+        description: "CPU threads for prompt evaluation (prefill). Can be higher than n_threads. 0 = use all available cores."
+        type: "integer"
+        default: 0
       - name: "n_ctx"
         description: "Context window size in tokens. Use 2048+ for long reasoning chains."
         type: "integer"
         default: 2048
       - name: "n_batch"
-        description: "Batch size for prompt evaluation. Larger = faster prompt processing. 512 is recommended."
+        description: "Batch size for prompt evaluation. Larger = faster prompt processing."
         type: "integer"
         default: 512
-    modelPath: "E:\\model-guff\\deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+      - name: "use_mlock"
+        description: "Pin model weights in RAM (prevents OS from swapping them out during inference). 1 = enabled."
+        type: "integer"
+        default: 1
+    modelPath: "D:\\models\\deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
 
   - name: "mistral-decision"
     description: "A model optimised for concise, deterministic decision-making and action selection."
@@ -47,21 +55,29 @@ Models:
       - name: "max_tokens"
         description: "The maximum number of tokens to generate. Decisions are short."
         type: "integer"
-        default: 256
+        default: 128
       - name: "n_gpu_layers"
-        description: "Number of model layers to offload to GPU. Set to 99 to offload all layers (requires CUDA/Metal build). Set to 0 for CPU-only."
+        description: "Number of model layers to offload to GPU. 0 = CPU-only."
         type: "integer"
         default: 0
       - name: "n_threads"
-        description: "Number of CPU threads for token generation. 0 = auto-detect."
+        description: "CPU threads for token generation. 0 = auto-detect."
         type: "integer"
-        default: 4
+        default: 0
+      - name: "n_threads_batch"
+        description: "CPU threads for prompt evaluation. 0 = use all available cores."
+        type: "integer"
+        default: 0
       - name: "n_ctx"
-        description: "Context window size in tokens. Smaller for faster decisions."
+        description: "Context window size in tokens. Kept smaller for faster KV cache allocation."
         type: "integer"
-        default: 512
+        default: 1024
       - name: "n_batch"
         description: "Batch size for prompt evaluation."
         type: "integer"
         default: 512
-    modelPath: "E:\\model-guff\\qwen2.5-3b-instruct-q4_k_m.gguf"
+      - name: "use_mlock"
+        description: "Pin model weights in RAM. 1 = enabled."
+        type: "integer"
+        default: 1
+    modelPath: "D:\\models\\SmolLM2-1.7B-Instruct-Q4_K_M.gguf"

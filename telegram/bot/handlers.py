@@ -136,11 +136,18 @@ class Handlers:
             # Proceed to decision without reasoning context
 
         # ── Step 2: Decision (sent to user) ──────────────────────────────
-        # Include reasoning as an intermediate assistant turn so the
-        # decision model can build on it.
-        decision_messages = list(messages)
+        # The decision model only needs the system prompt, the current user
+        # question, and the reasoning output — not the full conversation
+        # history.  This keeps the input well within the model's n_ctx limit.
+        decision_messages: list = [
+            {"role": "system", "content": messages[0]["content"]},
+            {"role": "user", "content": user_text},
+        ]
         if reasoning:
             decision_messages.append({"role": "assistant", "content": reasoning})
+            decision_messages.append(
+                {"role": "user", "content": "Based on the above reasoning, what is your final answer?"}
+            )
 
         try:
             decision = self._client.decide(

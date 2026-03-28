@@ -9,12 +9,18 @@ pub struct ModelParams {
     pub max_tokens: usize,
     /// Layers to offload to GPU. 99 = all layers. 0 = CPU-only.
     pub n_gpu_layers: u32,
-    /// CPU threads for generation. 0 = auto-detect.
+    /// CPU threads for *token generation* (autoregressive decode).
+    /// Set to physical core count, not logical. 0 = auto-detect.
     pub n_threads: u32,
+    /// CPU threads for *prompt evaluation* (batch/prefill phase).
+    /// Can be higher than n_threads; 0 = use all available cores.
+    pub n_threads_batch: u32,
     /// Context window in tokens.
     pub n_ctx: u32,
     /// Batch size for prompt evaluation.
     pub n_batch: u32,
+    /// Pin the model weights in RAM (prevents OS from swapping them out).
+    pub use_mlock: bool,
 }
 
 /// Owns the loaded `LlamaModel`. Load once with [`ModelRunner::load`],
@@ -37,12 +43,19 @@ impl ModelRunner {
             path,
             n_gpu_layers = params.n_gpu_layers,
             n_threads = params.n_threads,
+            n_threads_batch = params.n_threads_batch,
             n_ctx = params.n_ctx,
             n_batch = params.n_batch,
+            use_mlock = params.use_mlock,
             "loading GGUF model"
         );
         let llama_params = LlamaParams {
             n_gpu_layers: params.n_gpu_layers,
+            // mmap keeps the file open and lets the OS manage page cache —
+            // much faster cold-start on CPU than loading the whole file into RAM.
+            use_mmap: true,
+            // Lock model weights in RAM so the OS never swaps them out mid-inference.
+            use_mlock: params.use_mlock,
             ..LlamaParams::default()
         };
         let model = LlamaModel::load_from_file(path, llama_params)
@@ -52,6 +65,16 @@ impl ModelRunner {
             })?;
         info!(path, "model loaded successfully");
         Ok(Self { model, params })
+    }
+
+    /// The context window (in tokens) this runner was configured with.
+    pub fn n_ctx(&self) -> u32 {
+        self.params.n_ctx
+    }
+
+    /// The default max_tokens from config (used when caller does not override).
+    pub fn max_tokens_default(&self) -> usize {
+        self.params.max_tokens
     }
 
     /// Run inference on a fully-formed prompt string.
@@ -67,20 +90,32 @@ impl ModelRunner {
         let temp = temperature.unwrap_or(self.params.temperature);
         debug!(prompt_len = prompt.len(), max_tokens = max, temperature = temp, "creating inference session");
 
-        // Resolve thread count: 0 means auto-detect from available CPU cores.
+        // Generation threads: physical cores only avoids HT contention.
+        // 0 in config → auto-detect via std.
         let n_threads = if self.params.n_threads == 0 {
             std::thread::available_parallelism()
-                .map(|n| n.get() as u32)
+                .map(|n| (n.get() as u32).max(1))
                 .unwrap_or(4)
         } else {
             self.params.n_threads
+        };
+
+        // Batch threads: prompt-eval is embarrassingly parallel; use all cores.
+        // 0 in config → auto-detect (same as n_threads here, but set separately
+        // so users can tune them independently in ai-config.yaml).
+        let n_threads_batch = if self.params.n_threads_batch == 0 {
+            std::thread::available_parallelism()
+                .map(|n| n.get() as u32)
+                .unwrap_or(n_threads)
+        } else {
+            self.params.n_threads_batch
         };
 
         let session_params = SessionParams {
             n_ctx: self.params.n_ctx,
             n_batch: self.params.n_batch,
             n_threads,
-            n_threads_batch: n_threads,
+            n_threads_batch,
             ..SessionParams::default()
         };
 
@@ -96,16 +131,19 @@ impl ModelRunner {
                 e
             })?;
 
+        // Lean sampler chain tuned for CPU speed:
+        //   RepetitionPenalty — prevents looping; scan last 32 tokens only.
+        //   MinP              — single-pass vocabulary filter (replaces the
+        //                       TopK+TopP+MinP chain at lower per-token cost).
+        //   Temperature       — scale the distribution.
         let sampler = StandardSampler::new_softmax(
             vec![
                 llama_cpp::standard_sampler::SamplerStage::RepetitionPenalty {
                     repetition_penalty: 1.1,
                     frequency_penalty: 0.0,
                     presence_penalty: 0.0,
-                    last_n: 64,
+                    last_n: 32,
                 },
-                llama_cpp::standard_sampler::SamplerStage::TopK(40),
-                llama_cpp::standard_sampler::SamplerStage::TopP(0.95),
                 llama_cpp::standard_sampler::SamplerStage::MinP(0.05),
                 llama_cpp::standard_sampler::SamplerStage::Temperature(temp),
             ],

@@ -3,6 +3,13 @@ name = "LLML"
 version = "0.1.0"
 edition = "2024"
 
+# Run with `cargo run --release` (or `cargo build --release`).
+# Debug builds run llama.cpp without optimisations — typically 5-10x slower.
+[profile.release]
+opt-level = 3
+lto = "thin"          # cross-crate inlining, noticeably faster than no-LTO
+codegen-units = 1     # single CGU = maximum inlining and vectorisation
+
 [dependencies]
 llama_cpp = "0.3.2"
 serde = { version = "1", features = ["derive"] }

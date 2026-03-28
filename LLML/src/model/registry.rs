@@ -60,8 +60,10 @@ pub fn params_from_config(
         temperature: get_f64("temperature", 0.7) as f32,
         max_tokens: get_f64("max_tokens", 100.0) as usize,
         n_gpu_layers: get_f64("n_gpu_layers", 0.0) as u32,
-        n_threads: get_f64("n_threads", 4.0) as u32,
+        n_threads: get_f64("n_threads", 0.0) as u32,
+        n_threads_batch: get_f64("n_threads_batch", 0.0) as u32,
         n_ctx: get_f64("n_ctx", 512.0) as u32,
         n_batch: get_f64("n_batch", 512.0) as u32,
+        use_mlock: get_f64("use_mlock", 0.0) != 0.0,
     }
 }
