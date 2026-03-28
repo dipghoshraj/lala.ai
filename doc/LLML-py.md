@@ -1,6 +1,6 @@
 # LLML-py — Python Inference Server
 
-> **Status:** Planned  
+> **Status:** Implemented  
 > **Replaces:** `LLML/` Rust/Axum server (kept as archive fallback)  
 > **Motivation:** `llama_cpp` 0.3.2 (Rust crate) is not mature enough for reliable local inference. `llama-cpp-python` provides the same `llama.cpp` C++ backend with a more stable, actively-maintained Python binding.
 
@@ -241,25 +241,25 @@ CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python --upgrade --force-rein
 ### Phase 1 — Scaffold & Config
 Files with no inter-dependencies, can be created in parallel.
 
-- [ ] `requirements.txt`
-- [ ] `config.py` — `AiConfig`, `Model`, `Parameter`, `ModelParams` dataclasses; `load_config()`; `params_from_config()`
-- [ ] `model/__init__.py`, `api/__init__.py`
+- [x] `requirements.txt`
+- [x] `config.py` — `AiConfig`, `Model`, `Parameter`, `ModelParams` dataclasses; `load_config()`; `params_from_config()`
+- [x] `model/__init__.py`, `api/__init__.py`
 
 ### Phase 2 — Model Layer
 Depends on: `config.py`
 
-- [ ] `model/runner.py` — `ModelRunner`
-- [ ] `model/registry.py` — `ModelRegistry`
+- [x] `model/runner.py` — `ModelRunner`
+- [x] `model/registry.py` — `ModelRegistry`
 
 ### Phase 3 — API Layer
 Depends on: `model/runner.py`, `model/registry.py`
 
-- [ ] `api/routes.py` — Pydantic models, `build_prompt()`, `slide_messages()`, route handlers
+- [x] `api/routes.py` — Pydantic models, `build_prompt()`, `slide_messages()`, route handlers
 
 ### Phase 4 — Entry Point
 Depends on: Phase 2 + Phase 3
 
-- [ ] `main.py`
+- [x] `main.py`
 
 ---
 
