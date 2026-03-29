@@ -21,3 +21,7 @@ target
 #.idea/
 
 *.gguf
+
+.env
+
+*__pycache__*

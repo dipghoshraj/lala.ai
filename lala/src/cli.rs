@@ -1,64 +1,184 @@
 use std::io::{self, Write};
-use crate::agent::model::ModelWrapper;
-use anyhow::Result;
-use llama_cpp::standard_sampler::StandardSampler;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 
-pub fn run(model_path: &str) -> anyhow::Result<()> {
-    let model = ModelWrapper::load(model_path)?;
-    let mut session = model.create_session()?;
+use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
 
+use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
+use crate::agent::planner::{Agent, needs_reasoning};
 
-    println!("🦙 lala-agent ready (/exit to quit)");
+// Braille spinner — visible in any modern terminal (Windows Terminal, VS Code, etc.)
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-    loop {
-        print!(">> ");
-        let input = get_input()?;
-        if input == "/exit" {
-            break;
-        }
-        println!("{}", input);
-        let prompt =build_prompt(&input)?;
-        session.session.advance_context(&prompt)?;
+// ── ANSI colour codes ─────────────────────────────────────────────────────────
+const RESET: &str = "\x1b[0m";
+const BOLD_YELLOW: &str = "\x1b[1;33m"; // reasoning — header & border
+const DIM_YELLOW: &str = "\x1b[2;33m";  // reasoning — body text
+const BOLD_CYAN: &str = "\x1b[1;36m";   // answer — header & border
+const CYAN: &str = "\x1b[36m";          // answer — body text
+const SECTION_WIDTH: usize = 60;
 
-        let mut stream = session.session.start_completing_with(StandardSampler::default(), 512)?;
-        println!("--- response ---");
+const SYSTEM_PROMPT: &str =
+    "You are a friendly AI assistant named lala. \
+     Explain things clearly and naturally. \
+     Respond in full sentences.";
 
-        let mut buffer = String::new();
-        while let Some(token) = stream.next_token() {
-            let text = model.model.token_to_piece(token);
-            buffer.push_str(&text);
-
-            if buffer.contains("[/INST]") {
+/// Run `f` while displaying a braille spinner labelled `label`.
+/// Stops and erases the spinner line before returning.
+fn with_spinner<F, T>(label: &str, f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    let running = Arc::new(AtomicBool::new(true));
+    let spin_flag = Arc::clone(&running);
+    let label_owned = label.to_string();
+    let clear_len = label.len() + 8;
+    let spinner_handle = thread::spawn(move || {
+        let mut i = 0usize;
+        loop {
+            if !spin_flag.load(Ordering::Relaxed) {
                 break;
             }
-
-            print!("{}", text);
-            io::stdout().flush().unwrap();
+            print!("\r  {} {}...", SPINNER[i % SPINNER.len()], label_owned);
+            io::stdout().flush().ok();
+            i += 1;
+            thread::sleep(Duration::from_millis(80));
         }
-        println!();
+        print!("\r{}\r", " ".repeat(clear_len));
+        io::stdout().flush().ok();
+    });
+    let result = f();
+    running.store(false, Ordering::Relaxed);
+    spinner_handle.join().ok();
+    result
+}
+
+/// Print a titled section with a coloured header and separator.
+///
+/// ```
+/// ▷ Reasoning
+/// ────────────────────────────────────────────────────────────
+/// [body text]
+/// ────────────────────────────────────────────────────────────
+/// ```
+fn print_section(header: &str, header_color: &str, text_color: &str, content: &str) {
+    let sep = "─".repeat(SECTION_WIDTH);
+    println!("\n{}{} {}{}", header_color, "▷", header, RESET);
+    println!("{}{}{}", header_color, sep, RESET);
+    println!("{}{}{}", text_color, content.trim(), RESET);
+    println!("{}{}{}", header_color, sep, RESET);
+    println!();
+}
+
+pub fn run(api_url: &str, smart_router: bool) -> anyhow::Result<()> {
+    let client = ApiClient::new(api_url);
+    let agent = Agent::new(&client);
+    let mut rl = DefaultEditor::new()?;
+
+    // Conversation history — system prompt is permanently at index 0.
+    let mut history: Vec<ChatMessage> = vec![ChatMessage {
+        role: "system".to_string(),
+        content: SYSTEM_PROMPT.to_string(),
+    }];
+
+    println!("lala  —  connected to {api_url}");
+    if smart_router {
+        println!("Router: LLM classifier (LALA_SMART_ROUTER=1)");
+    }
+    println!("Commands: /clear  reset conversation | /exit  quit\n");
+
+    loop {
+        let line = match rl.readline(">> ") {
+            Ok(l) => l,
+            Err(ReadlineError::Interrupted | ReadlineError::Eof) => break,
+            Err(e) => return Err(e.into()),
+        };
+
+        let input = line.trim().to_string();
+        if input.is_empty() {
+            continue;
+        }
+        let _ = rl.add_history_entry(&input);
+
+        match input.as_str() {
+            "/exit" | "/quit" => break,
+            "/clear" => {
+                history.truncate(1); // keep system prompt
+                println!("Conversation cleared.\n");
+                continue;
+            }
+            _ => {}
+        }
+
+        history.push(ChatMessage {
+            role: "user".to_string(),
+            content: input.clone(),
+        });
+
+        // ── Router: classify query to skip reasoning when not needed ──────
+        let route = if smart_router {
+            agent.classify_query(&input, &history)
+        } else if needs_reasoning(&input) {
+            RouteDecision::Reasoning
+        } else {
+            RouteDecision::Direct
+        };
+
+        if route == RouteDecision::Direct {
+            let result = with_spinner("thinking", || agent.run_direct(&history));
+            match result {
+                Ok(reply) => {
+                    print_section("Answer", BOLD_CYAN, CYAN, &reply);
+                    history.push(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: reply,
+                    });
+                }
+                Err(e) => {
+                    eprintln!("{}Error: {}{}", BOLD_CYAN, e, RESET);
+                    history.pop();
+                }
+            }
+            continue;
+        }
+
+        // ── Step 1: Reasoning ─────────────────────────────────────────────
+        let reasoning_result = with_spinner("reasoning", || agent.run_reasoning(&history));
+
+        match reasoning_result {
+            Err(e) => {
+                eprintln!("{}Error during reasoning: {}{}\n", BOLD_YELLOW, e, RESET);
+                history.pop();
+                continue;
+            }
+            Ok(analysis) => {
+                print_section("Reasoning", BOLD_YELLOW, DIM_YELLOW, &analysis);
+
+                // ── Step 2: Decision ───────────────────────────────────────
+                let decision_result =
+                    with_spinner("deciding", || agent.run_decision(&history, &analysis));
+
+                match decision_result {
+                    Ok(reply) => {
+                        print_section("Answer", BOLD_CYAN, CYAN, &reply);
+                        history.push(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: reply,
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("{}Error: {}{}\n", BOLD_CYAN, e, RESET);
+                        history.pop();
+                    }
+                }
+            }
+        }
     }
 
+    println!("Bye!");
     Ok(())
 }
 
-
-fn get_input() -> io::Result<String> {
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
-
-
-fn build_prompt(prompt: &str) ->  Result<String> {
-
-    let system_prompt =  "<s>[INST]\nYou are a friendly AI assistant. \
-            Explain things clearly and naturally. Respond in full sentences and use emojis occasionally";
-    
-    let full_prompt = format!(
-        "{}\n\n{}\n[/INST]",
-        system_prompt,
-        prompt
-    );
-    Ok(full_prompt)
-}
