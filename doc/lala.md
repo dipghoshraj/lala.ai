@@ -7,12 +7,14 @@
 
 ## Overview
 
-`lala` is the front-end of the system. It owns the user experience: readline input, multi-turn conversation history, a spinner animation during inference, and clean error recovery. It has no direct knowledge of the model — all LLM communication goes through HTTP to the LLML server.
+`lala` is the front-end of the system. It owns the user experience: readline input, multi-turn conversation history, a spinner animation during inference, folder-based document ingestion, BM25 search over ingested content, and clean error recovery. It has no direct knowledge of the model — all LLM communication goes through HTTP to the LLML server.
 
 ```
 User (terminal)
       │
-  rustyline REPL
+  rustyline REPL  →  command dispatch (/ingest, /search, /status, /help, ...)
+      │                         │
+      │                    rag::RagStore  ──►  SQLite FTS5 (lala.db)
       │
   conversation history (in-memory)
       │
@@ -29,12 +31,16 @@ User (terminal)
 
 ```
 lala/src/
-  main.rs          # Entry point — resolves API URL + LALA_SMART_ROUTER flag, starts CLI
-  cli.rs           # REPL loop, spinner, conversation history, router branching
+  main.rs              # Entry point — resolves API URL, DB path, SMART_ROUTER; inits RagStore
+  cli/
+    mod.rs             # REPL loop, welcome banner, chat routing
+    commands.rs        # Command dispatch (/help, /status, /search, /ingest, /clear, /exit)
+    ingest.rs          # Batch + single-file ingestion with progress output
+    display.rs         # Spinner, ANSI colours, print_section(), info/success/warn/error helpers
   agent/
     mod.rs
-    model.rs       # ApiClient — HTTP wrapper (chat, reason, decide, classify); RouteDecision enum
-    planner.rs     # Agent — classify_query(), run_direct(), run_reasoning(), run_decision()
+    model.rs           # ApiClient — HTTP wrapper (chat, reason, decide, classify); RouteDecision enum
+    planner.rs         # Agent — classify_query(), run_direct(), run_reasoning(), run_decision()
 ```
 
 ---
@@ -55,25 +61,74 @@ LLML_API_URL=http://192.168.1.10:3000 cargo run
 
 # Enable LLM-based smart query router (requires LLML server)
 LALA_SMART_ROUTER=1 cargo run
-LALA_SMART_ROUTER=1 LLML_API_URL=http://192.168.1.10:3000 cargo run
+
+# Custom database path (default: ./lala.db)
+LALA_DB_PATH=/path/to/my.db cargo run
+
+# Custom ingest directory (default: ./ingest)
+LALA_INGEST_DIR=/path/to/docs cargo run
 ```
 
 URL resolution priority: **CLI argument → `LLML_API_URL` env var → `http://localhost:3000`**
 
-`LALA_SMART_ROUTER=1` enables the LLM meta-classifier (`POST /v1/classify`) for each turn. When unset, a fast local keyword heuristic is used instead (no extra network call per turn).
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|--------|
+| `LLML_API_URL` | `http://localhost:3000` | LLML inference server URL |
+| `LALA_SMART_ROUTER` | unset | Set to `1` to enable LLM-based query classification |
+| `LALA_DB_PATH` | `./lala.db` | SQLite database file path for RAG storage |
+| `LALA_INGEST_DIR` | `./ingest` | Directory scanned by `/ingest` for batch ingestion |
 
 ---
 
 ## CLI Commands
 
-| Input     | Action |
-|-----------|--------|
-| Any text  | Send as a user message to the LLM |
-| `/clear`  | Reset conversation history (keeps system prompt) |
-| `/exit`   | Quit |
+| Input | Action |
+|-------|--------|
+| Any text | Send as a user message to the LLM |
+| `/ingest` | Batch-ingest all files in `./ingest/` (or `LALA_INGEST_DIR`) |
+| `/ingest-file <path>` | Ingest a single file by explicit path |
+| `/search <query>` | BM25 full-text search over ingested documents (top 5 results) |
+| `/status` | Show document count, chunk count, ingest directory |
+| `/help` | Show available commands |
+| `/clear` | Reset conversation history (keeps system prompt) |
+| `/exit` | Quit |
 | Ctrl-C / Ctrl-D | Quit |
 
 Arrow-key history navigation (up/down) is provided by `rustyline`.
+
+### Ingestion
+
+Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. Each file is read, chunked into 512-character overlapping windows (64-char overlap), and stored in SQLite FTS5. Duplicate files (same source path) are skipped. Progress and a summary are displayed:
+
+```
+>> /ingest
+  ℹ Found 3 file(s) in ./ingest/
+  [1/3] architecture.md
+  ✓ architecture.md → 12 chunks
+  [2/3] phase0.md
+  ✓ phase0.md → 8 chunks
+  [3/3] notes.txt
+  ⚠ notes.txt: Already ingested: ./ingest/notes.txt
+  ────────────────────────────────────────────────────────────
+  Ingested: 2  Skipped: 1  Failed: 0  Chunks: 20
+  ────────────────────────────────────────────────────────────
+```
+
+For one-off files outside the ingest directory, use `/ingest-file <path>`.
+
+### Search
+
+```
+>> /search layered architecture
+  [1] score: -3.2140  chunk #2
+      The system is structured as five distinct layers…
+  [2] score: -1.8700  chunk #0
+      lala.ai — Agentic RAG System…
+```
+
+Returns top 5 chunks ranked by BM25 relevance. More negative score = better match.
 
 ---
 
@@ -175,7 +230,7 @@ input query
 
 ## System Prompt
 
-The system prompt is hardcoded in `cli.rs` and always occupies index 0 of the history:
+The system prompt is hardcoded in `cli/mod.rs` and always occupies index 0 of the history:
 
 ```
 You are a friendly AI assistant named lala.
@@ -183,7 +238,7 @@ Explain things clearly and naturally.
 Respond in full sentences.
 ```
 
-This can be edited in `cli.rs` under `const SYSTEM_PROMPT`.
+This can be edited in `cli/mod.rs` under `const SYSTEM_PROMPT`.
 
 ---
 
@@ -195,7 +250,7 @@ This can be edited in `cli.rs` under `const SYSTEM_PROMPT`.
 | `rustyline` | Readline-style input with history and arrow-key navigation |
 | `serde` / `serde_json` | HTTP request/response serialization |
 | `anyhow`    | Error propagation |
-| `rag` (path dep) | Standalone RAG crate — SQLite FTS5 store + retrieve |
+| `rag` (path dep) | Standalone RAG crate — SQLite FTS5 store, retrieve, document/chunk counts |
 
 ---
 

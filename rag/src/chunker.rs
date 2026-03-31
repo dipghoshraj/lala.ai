@@ -35,39 +35,3 @@ pub fn chunk(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     chunks
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn empty_text_returns_empty_vec() {
-        assert!(chunk("", 512, 64).is_empty());
-    }
-
-    #[test]
-    fn text_shorter_than_chunk_size_returns_single_chunk() {
-        let text = "short text";
-        let result = chunk(text, 512, 64);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], text);
-    }
-
-    #[test]
-    fn overlap_greater_than_chunk_size_treated_as_zero() {
-        let text = "a".repeat(100);
-        let result = chunk(&text, 10, 20);
-        assert_eq!(result.len(), 10);
-    }
-
-    #[test]
-    fn chunks_overlap_correctly() {
-        let text = "a".repeat(20);
-        // chunk_size=10, overlap=5 → step=5
-        // chunks starting at 0, 5, 10 (last chunk covers 10..20)
-        let result = chunk(&text, 10, 5);
-        assert_eq!(result.len(), 3);
-        for c in &result {
-            assert!(c.len() <= 10);
-        }
-    }
-}

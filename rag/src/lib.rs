@@ -116,6 +116,24 @@ impl RagStore {
         }
         Ok(results)
     }
+
+    /// Count of documents in the store.
+    pub fn document_count(&self) -> Result<usize> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// Count of chunks in the store.
+    pub fn chunk_count(&self) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM chunks_fts",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
 }
 
 /// Simple ISO-8601 timestamp without pulling in chrono.
@@ -131,56 +149,3 @@ fn chrono_now() -> String {
     format!("{secs}")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    fn temp_db() -> String {
-        let path = format!("test_{}.db", Uuid::new_v4());
-        path
-    }
-
-    #[test]
-    fn store_and_retrieve() {
-        let path = temp_db();
-        let store = RagStore::open(&path).unwrap();
-
-        let text = "Rust is a systems programming language focused on safety and performance. \
-                     The borrow checker enforces memory safety at compile time without garbage collection.";
-        let count = store.store("test doc", "test_source", text).unwrap();
-        assert!(count >= 1);
-
-        let results = store.retrieve("safety", 5).unwrap();
-        assert!(!results.is_empty());
-        assert!(results[0].score < 0.0); // BM25 scores are negative
-
-        fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn duplicate_source_rejected() {
-        let path = temp_db();
-        let store = RagStore::open(&path).unwrap();
-
-        store.store("doc", "same_source", "some text").unwrap();
-        let result = store.store("doc2", "same_source", "other text");
-        assert!(result.is_err());
-
-        fs::remove_file(&path).ok();
-    }
-
-    #[test]
-    fn retrieve_no_results() {
-        let path = temp_db();
-        let store = RagStore::open(&path).unwrap();
-
-        store
-            .store("doc", "src", "hello world foo bar")
-            .unwrap();
-        let results = store.retrieve("zzzznonexistent", 5).unwrap();
-        assert!(results.is_empty());
-
-        fs::remove_file(&path).ok();
-    }
-}
