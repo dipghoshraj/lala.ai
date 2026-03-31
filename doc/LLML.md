@@ -1,20 +1,22 @@
 # LLML — Local LLM Inference Server
 
 > **Location:** `lala.ai/LLML/`  
-> **Role:** Model layer — loads a GGUF model once at startup and serves inference via an OpenAI-compatible HTTP API.
+> **Role:** Model layer — loads GGUF models once at startup and serves inference via an OpenAI-compatible HTTP API.
 
 ---
 
 ## Overview
 
-LLML is a standalone Rust HTTP server that wraps a local LLM (via `llama_cpp`) behind a clean REST API. It is intentionally thin: no user interaction, no session persistence — just load-once inference over HTTP.
+LLML is a standalone Python HTTP server (FastAPI + llama-cpp-python) that wraps local LLMs behind a clean REST API. It is intentionally thin: no user interaction, no session persistence — just load-once inference over HTTP.
 
 ```
 ai-config.yaml  ──►  LLML server (port 3000)
                          │
-                    LlamaModel (loaded once)
+                    ModelRegistry (loaded once per role)
                          │
                   POST /v1/chat/completions
+                  POST /v1/classify
+                  GET  /v1/models
                          │
                     JSON response
 ```
@@ -24,16 +26,20 @@ ai-config.yaml  ──►  LLML server (port 3000)
 ## Source Layout
 
 ```
-LLML/src/
-  main.rs          # Startup — reads config, loads model, starts Axum server
-  model/
-    mod.rs         # Re-exports ModelParams and ModelRunner
-    model.rs       # LlamaModel wrapper — load once, generate per request
+LLML/
+  main.py             # Entry — loads config, registers models, starts uvicorn on :3000
+  config.py           # Deserializes ai-config.yaml → AiConfig / Model / ModelParams
+  requirements.txt
   api/
-    mod.rs         # OpenAI-compatible types, prompt builder, Axum router + handler
-  loalYaml/
-    mod.rs
-    loadYaml.rs    # Deserializes ai-config.yaml into typed structs
+    __init__.py
+    routes.py         # Router: /v1/chat/completions, /v1/models, /v1/classify
+                      # build_prompt() → Mistral [INST]...[/INST] format
+                      # slide_messages() → context window management
+    classifier.py     # Heuristic fast-path + LLM-based query classifier
+  model/
+    __init__.py
+    runner.py         # ModelRunner — async generate() + stream() via asyncio.to_thread
+    registry.py       # ModelRegistry: role (str) → ModelRunner
 ```
 
 ---
@@ -46,71 +52,107 @@ All model parameters are declared in the shared `ai-config.yaml` at the repo roo
 |---------------|---------|---------|-------------|
 | `temperature`  | float   | 0.7     | Sampling temperature |
 | `max_tokens`   | integer | 100     | Default token generation limit per request |
-| `n_gpu_layers` | integer | 0       | Layers offloaded to GPU. `0` = CPU-only. `99` = all layers (requires CUDA/Metal build) |
-| `n_threads`    | integer | 4       | CPU threads for generation. Set to your **physical** core count |
-| `n_ctx`        | integer | 512     | Context window in tokens. `512` for short queries, `2048` for long conversations |
+| `n_gpu_layers` | integer | 0       | Layers offloaded to GPU. `0` = CPU-only. `99` = all layers (requires CUDA build) |
+| `n_threads`    | integer | 4       | CPU threads for generation. `0` = auto-detect (`os.cpu_count()`) |
+| `n_ctx`        | integer | 512     | Context window in tokens. `512` for short queries, `2048` for conversations |
 | `n_batch`      | integer | 512     | Prompt evaluation batch size. Larger = faster prompt processing |
+| `use_mlock`    | integer | 1       | Pin model weights in RAM (prevents swapping) |
 | `modelPath`    | string  | —       | Absolute path to the `.gguf` model file |
 
 ---
 
-## Model Layer — `model/model.rs`
-
-### `ModelParams`
-Typed struct holding all parameters extracted from config. Passed once to `ModelRunner::load()`.
+## Model Layer — `model/runner.py`
 
 ### `ModelRunner`
-```rust
-ModelRunner::load(path, params) -> anyhow::Result<ModelRunner>
-```
-Calls `LlamaModel::load_from_file()` exactly once. The loaded model is held in an `Arc<ModelRunner>` shared across all HTTP requests. Marked `Send + Sync` — safe for concurrent access because each request creates its own `LlamaSession`.
 
-```rust
-runner.generate_from_prompt(prompt: &str, max_tokens: Option<usize>) -> anyhow::Result<String>
+Wraps `llama_cpp.Llama` (C FFI to llama.cpp). One instance per model role, loaded at startup.
+
+```python
+runner = ModelRunner(model_path, params)
 ```
-Creates a fresh session per call (no context bleed between requests), advances context with the pre-built prompt, and collects generated tokens until the max limit or an `[/INST]` marker is encountered.
+
+Thread count resolution: if `n_threads=0` in config, auto-detects via `os.cpu_count()`.
+
+### `async generate()`
+
+Runs inference in a background thread via `asyncio.to_thread()` so the FastAPI event loop is never blocked:
+
+```python
+result = await runner.generate(prompt, max_tokens, temperature)
+# → str (stripped completion text)
+```
+
+Calls `self._model(prompt, max_tokens, temperature, stop=["[/INST]"], echo=False)` internally.
+
+### `async stream()`
+
+Streaming variant — pushes token chunks to an `asyncio.Queue` from a daemon thread, yields them as an async iterator. Used for SSE streaming responses.
 
 ---
 
-## API Layer — `api/mod.rs`
+## Model Registry — `model/registry.py`
 
-### Endpoint
+Simple dict-based registry mapping role strings to `ModelRunner` instances:
 
-```
-POST /v1/chat/completions
-Content-Type: application/json
-```
+| Method | Description |
+|--------|-------------|
+| `register(role, runner)` | Maps a role key to its ModelRunner |
+| `get(role)` | Lookup by role (returns `None` if not found) |
+| `roles()` | Sorted list of all registered role names |
+| `first()` | Returns `(role, runner)` tuple or `None` |
 
-### Request Schema (OpenAI-compatible)
+---
 
+## API Layer — `api/routes.py`
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat inference (non-streaming + SSE streaming) |
+| `POST` | `/v1/classify` | Query routing — classifies as `"direct"` or `"reasoning"` |
+| `GET`  | `/v1/models` | Lists all registered role names |
+
+### POST `/v1/chat/completions`
+
+**Request:**
 ```json
 {
-  "model": "LLML",
+  "model": "reasoning",
   "messages": [
     { "role": "system",    "content": "You are a helpful assistant." },
-    { "role": "user",      "content": "What is Rust?" },
-    { "role": "assistant", "content": "Rust is a systems programming language..." },
-    { "role": "user",      "content": "Give me an example." }
+    { "role": "user",      "content": "What is Rust?" }
   ],
-  "max_tokens": 200
+  "max_tokens": 200,
+  "temperature": 0.7,
+  "stream": false
 }
 ```
 
-| Field        | Required | Description |
-|-------------|----------|-------------|
-| `messages`   | Yes      | Ordered array of `role`/`content` pairs. Roles: `system`, `user`, `assistant` |
-| `model`      | No       | Informational only — LLML serves one model at a time |
-| `max_tokens` | No       | Overrides the config default for this request |
-| `temperature`| No       | Accepted but currently informational (sampler uses defaults) |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `messages` | yes | Non-empty array of `{role, content}` pairs |
+| `model` | no | Role key from registry (defaults to first registered) |
+| `max_tokens` | no | Overrides the config default for this request |
+| `temperature` | no | Overrides the model config default (0.0–2.0) |
+| `stream` | no | `true` for SSE streaming, `false` (default) for batch response |
 
-### Response Schema
+**Flow:**
+1. Resolve model role (from `req.model` or first registered)
+2. Resolve `max_tokens` and `temperature` (request → config defaults)
+3. **Slide context window** via `slide_messages()` — drops oldest turn-pairs if prompt exceeds budget (`n_ctx - max_tokens - 32`)
+4. **Build prompt** via `build_prompt(messages)` → Mistral/Llama `[INST]...[/INST]` format
+5. Call `runner.generate()` (non-streaming) or `runner.stream()` (SSE chunks)
+6. Stop token `[/INST]` prevents echo/leakage
+7. Return OpenAI-compatible response with usage stats
 
+**Response:**
 ```json
 {
   "id": "chatcmpl-<uuid>",
   "object": "chat.completion",
   "created": 1711000000,
-  "model": "LLML",
+  "model": "reasoning",
   "choices": [
     {
       "index": 0,
@@ -118,30 +160,88 @@ Content-Type: application/json
       "finish_reason": "stop"
     }
   ],
-  "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+  "usage": { "prompt_tokens": 42, "completion_tokens": 128, "total_tokens": 170 }
 }
 ```
 
-> `usage` token counts are placeholder zeros — tracking is not yet implemented.
+### POST `/v1/classify`
 
-### Prompt Builder
+Classifies a query as requiring reasoning or a direct answer. Uses a two-tier strategy:
 
-`build_prompt(messages)` converts the OpenAI messages array into a Mistral/Llama `[INST]` string:
+1. **Heuristic fast-path** (no LLM call): greeting patterns, short queries, keyword triggers
+2. **LLM fallback**: sends query + context to reasoning model with a classifier system prompt
+
+**Request:**
+```json
+{
+  "query": "explain transformers in ML",
+  "context": [
+    { "role": "user",      "content": "hi" },
+    { "role": "assistant", "content": "Hello! How can I help?" }
+  ]
+}
+```
+
+**Response:**
+```json
+{ "route": "reasoning", "confidence": "heuristic" }
+```
+
+### GET `/v1/models`
+
+Returns all registered roles in OpenAI list format:
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "decision", "object": "model" },
+    { "id": "reasoning", "object": "model" }
+  ]
+}
+```
+
+---
+
+## Classifier — `api/classifier.py`
+
+Five-step heuristic priority chain:
+
+1. Exact-match or starts-with **greeting patterns** (`hello`, `hi`, `thanks`, `bye`, etc.) → `"direct"`
+2. ≤3 words + no reasoning trigger → `"direct"`
+3. Contains **reasoning triggers** (`why`, `how`, `explain`, `analyze`, `code`, `debug`, `implement`, etc.) → `"reasoning"`
+4. ≤8 words + no trigger → `"direct"`
+5. Default for longer queries → `"reasoning"`
+
+The LLM classifier system prompt instructs the model to reply with exactly one word: `REASON` or `DIRECT`.
+
+---
+
+## Prompt Format
+
+`build_prompt()` converts the OpenAI messages array into Mistral/Llama instruction format:
 
 ```
-<s>[INST] <system>
+<s>[INST] {system_prompt}
 
-<first user message> [/INST] <assistant reply> </s>
-[INST] <next user message> [/INST]
+{first_user_message} [/INST] {assistant_reply} </s>
+[INST] {next_user_message} [/INST]
 ```
 
-- A leading `system` message is merged into the first `[INST]` block.  
-- `user`/`assistant` alternation builds multi-turn history.  
-- The final open `[/INST]` lets the model continue generation from there.
+- A leading `system` message is merged into the first `[INST]` block.
+- `user`/`assistant` alternation builds multi-turn history.
+- The final open `[/INST]` lets the model continue generation.
+- `[/INST]` in output tokens triggers an early stop (prevents prompt leakage).
 
-### Inference Dispatch
+---
 
-Inference is blocking (CPU-bound). The handler uses `tokio::task::spawn_blocking` to run `generate_from_prompt` on a dedicated thread pool, keeping the async Axum executor free during generation.
+## Context Window Management
+
+`slide_messages()` ensures the prompt fits within the model's `n_ctx` budget:
+
+- Budget = `n_ctx - max_tokens - 32` (reserves space for generation + safety margin)
+- Estimates token count as `len(content) / 4` (rough char-to-token approximation)
+- Always preserves the system prompt (index 0) and the last user message
+- Drops oldest turn-pairs from the middle when budget is exceeded
 
 ---
 
@@ -150,17 +250,14 @@ Inference is blocking (CPU-bound). The handler uses `tokio::task::spawn_blocking
 ### Docker (recommended)
 
 ```sh
-# Build the image from the repo root
 docker build -f LLML.Dockerfile -t lala-llml .
-
-# Run — mount your GGUF models directory
 docker run -p 3000:3000 \
   -v /path/to/your/models:/models \
   -v ./ai-config.yaml:/app/ai-config.yaml \
   lala-llml
 ```
 
-Update `modelPath` values in `ai-config.yaml` to use the container path before running:
+Update `modelPath` values in `ai-config.yaml` to use the container path:
 ```yaml
 modelPath: "/models/your-model.Q4_K_M.gguf"
 ```
@@ -180,17 +277,12 @@ python main.py
 python main.py --config /path/to/ai-config.yaml --port 3000
 ```
 
-Server starts on `0.0.0.0:3000` by default.
-
 ### Logging
 
-Controlled via the `PYTHONUNBUFFERED` env var and standard Python logging. Log level is `INFO` by default:
+Standard Python logging, `INFO` level by default:
 
 ```sh
-# Docker — stream logs to stdout
-docker run --rm -p 3000:3000 -v /path/to/models:/models lala-llml
-
-# Local — already streams to stdout via logging.basicConfig
+# Streaming logs to stdout
 PYTHONUNBUFFERED=1 python main.py
 ```
 
@@ -198,12 +290,9 @@ PYTHONUNBUFFERED=1 python main.py
 
 ## Dependencies
 
-| Crate              | Purpose |
-|--------------------|---------|
-| `llama_cpp`        | Local GGUF inference via llama.cpp C++ library |
-| `axum`             | Async HTTP server framework |
-| `tokio`            | Async runtime |
-| `serde` / `serde_json` / `serde_yaml` | Serialization for HTTP and config |
-| `anyhow`           | Error propagation |
-| `tracing` / `tracing-subscriber` | Structured logging |
-| `uuid`             | Response ID generation |
+| Package | Purpose |
+|---------|---------|
+| `fastapi` | Async HTTP server and router |
+| `uvicorn` | ASGI server (with standard extras for auto-reload, etc.) |
+| `llama-cpp-python` | Local GGUF model loading and token generation via llama.cpp C FFI |
+| `pyyaml` | `ai-config.yaml` parsing |

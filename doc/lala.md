@@ -35,8 +35,6 @@ lala/src/
     mod.rs
     model.rs       # ApiClient — HTTP wrapper (chat, reason, decide, classify); RouteDecision enum
     planner.rs     # Agent — classify_query(), run_direct(), run_reasoning(), run_decision()
-  db/
-    connection.rs  # PostgreSQL helpers (document_chunks, memory) — future use
 ```
 
 ---
@@ -197,7 +195,8 @@ This can be edited in `cli.rs` under `const SYSTEM_PROMPT`.
 | `rustyline` | Readline-style input with history and arrow-key navigation |
 | `serde` / `serde_json` | HTTP request/response serialization |
 | `anyhow`    | Error propagation |
-| `sqlx`      | PostgreSQL client (wired for future memory/RAG integration) |
+| `rusqlite` (bundled) | SQLite + FTS5 for RAG storage (Phase 0) |
+| `uuid`      | Document/chunk ID generation |
 
 ---
 

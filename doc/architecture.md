@@ -117,11 +117,11 @@ python main.py [--config PATH] [--port PORT]
 ```
 
 Startup sequence (see §5 for detail):
-1. Init `tracing` subscriber (level from `RUST_LOG`)
+1. Parse CLI args (`--config`, `--port`)
 2. `load_config("../ai-config.yaml")`
-3. For each model in config → `ModelRunner::load(path, params)` → register in `ModelRegistry`
-4. Wrap registry in `Arc`, build Axum router
-5. `TcpListener::bind("0.0.0.0:3000")` → `axum::serve()`
+3. For each model in config → `ModelRunner(path, params)` → register in `ModelRegistry`
+4. Build FastAPI app with registry in `app.state`, mount API router
+5. `uvicorn.run(app, host="0.0.0.0", port=3000)`
 
 ---
 
@@ -231,19 +231,17 @@ The `role` field in each model entry is the API-facing key. Both roles currently
 
 ```mermaid
 flowchart TD
-    A[main: parse RUST_LOG] --> B[init tracing subscriber]
-    B --> C[load_config ai-config.yaml]
+    A[main.py: parse --config, --port] --> C[load_config ai-config.yaml]
     C --> D{models empty?}
-    D -- yes --> E[return Err — exit]
+    D -- yes --> E[exit with error]
     D -- no --> F[for each model entry]
     F --> G[params_from_config\nreads temperature, max_tokens,\nn_gpu_layers, n_threads, n_ctx, n_batch]
-    G --> H[ModelRunner::load GGUF file]
+    G --> H[ModelRunner GGUF file]
     H --> I["registry.register(role, runner)"]
     I --> F
-    F --> J[Arc wrap registry]
-    J --> K[api::create_router registry]
-    K --> L[TcpListener bind 0.0.0.0:3000]
-    L --> M[axum::serve — event loop]
+    F --> J[app.state.registry = registry]
+    J --> K[mount api.routes router]
+    K --> L[uvicorn.run app 0.0.0.0:3000]
 ```
 
 ### 5.3 Request: POST /v1/chat/completions
@@ -251,30 +249,26 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant lala as lala ApiClient
-    participant axum as Axum handler
+    participant fastapi as FastAPI handler
     participant registry as ModelRegistry
-    participant blocking as spawn_blocking thread
+    participant thread as asyncio.to_thread
     participant runner as ModelRunner
 
-    lala->>axum: POST /v1/chat/completions\n{model?, messages, max_tokens?, temperature?}
+    lala->>fastapi: POST /v1/chat/completions\n{model?, messages, max_tokens?, temperature?}
 
-    axum->>axum: validate messages not empty
-    axum->>registry: resolve role\n(req.model → exact lookup, or first())
-    registry-->>axum: &ModelRunner  OR  400 unknown role / 500 empty registry
+    fastapi->>fastapi: validate messages not empty
+    fastapi->>registry: resolve role\n(req.model → exact lookup, or first())
+    registry-->>fastapi: ModelRunner  OR  400 unknown role / 500 empty registry
 
-    axum->>axum: build_prompt(messages)\nMistral [INST]...[/INST] format
+    fastapi->>fastapi: slide_messages(messages, n_ctx budget)
+    fastapi->>fastapi: build_prompt(messages)\nMistral [INST]...[/INST] format
 
-    axum->>blocking: spawn_blocking closure\n(prompt, max_tokens, temperature)
-    blocking->>runner: generate_from_prompt(prompt, max_tokens, temperature)
-    note over runner: temperature = req.temperature\n  ?? model config default
-    runner->>runner: create_session(SessionParams)
-    runner->>runner: advance_context(prompt)
-    runner->>runner: StandardSampler with resolved temperature
-    runner->>runner: collect tokens until max or [/INST] stop
-    runner-->>blocking: Ok(output_string)
-    blocking-->>axum: output_string
+    fastapi->>thread: asyncio.to_thread\n(runner.generate, prompt, max_tokens, temperature)
+    thread->>runner: _model(prompt, max_tokens, temperature, stop=["[/INST]"])
+    runner-->>thread: output_string
+    thread-->>fastapi: output_string
 
-    axum-->>lala: ChatResponse JSON\n{choices:[{message:{content}}], usage, ...}
+    fastapi-->>lala: ChatResponse JSON\n{choices:[{message:{content}}], usage, ...}
 ```
 
 ### 5.3 Request: GET /v1/models
@@ -413,7 +407,7 @@ classDiagram
     ModelRunner --> ModelParams : configured by
 ```
 
-**Thread safety:** `ModelRunner` wraps `llama-cpp-python`'s `Llama` object. Each HTTP request runs inference via `asyncio.to_thread` so the async event loop is never blocked. There is no shared mutable session state across concurrent requests.
+**Thread safety:** `ModelRunner` wraps `llama-cpp-python`'s `Llama` object. Each HTTP request runs inference via `asyncio.to_thread()` so the async event loop is never blocked. There is no shared mutable session state across concurrent requests.
 
 ---
 
@@ -606,22 +600,27 @@ The `ApiClient` struct is the sole boundary between `lala` and `LLML`. It uses `
 
 ---
 
-## 12. Infrastructure — PostgreSQL + pgvector
+## 12. Infrastructure
+
+### SQLite (Phase 0 — RAG)
+
+Phase 0 uses SQLite + FTS5 for keyword retrieval, accessed via `rusqlite` with the `bundled` feature. The DB file is `./lala.db` (overridable via `LALA_DB_PATH`). No external service required.
+
+### PostgreSQL + pgvector (Future — Vector Search)
 
 ```mermaid
 flowchart LR
     dockerfile["psql.Dockerfile\npostgres:18 + pgvector"]
     container["Docker container\n:5432"]
     init["init.sql\n(to be created)"]
-    lala_db["lala/src/db/\nconnection.rs\n(sqlx PgPool)"]
 
     dockerfile --> container
     init -->|"auto-run on first start"| container
-    lala_db -.->|"DATABASE_URL env var"| container
 
-    style lala_db stroke-dasharray: 5 5
     style init stroke-dasharray: 5 5
 ```
+
+PostgreSQL + pgvector is provisioned for future phases (vector embeddings, hybrid search) but is **not used in Phase 0**.
 
 Docker setup:
 ```sh
@@ -632,21 +631,19 @@ docker run -p 3000:3000 \
   -v ./ai-config.yaml:/app/ai-config.yaml \
   lala-llml
 
-# PostgreSQL + pgvector
+# PostgreSQL + pgvector (future phases)
 docker build -f psql.Dockerfile -t lala-postgres .
 docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 lala-postgres
 ```
 
-`DATABASE_URL=postgres://postgres:postgres@localhost:5432/lala` must be set for DB operations. The `sqlx` dependency is declared in `lala/Cargo.toml` but DB code is not yet wired into the live request loop.
-
-**Planned tables** (from `doc/future/design.md`):
+**Planned tables** (from `doc/future/design.md` — not yet created):
 
 | Table | Purpose |
-|-------|---------|
+|-------|--------|
 | `sessions` | Conversation session metadata |
 | `messages` | Per-turn message content + vector embeddings |
 | `documents` | Ingested source documents |
-| `document_chunks` | Chunked text + `bge-small` embeddings (pgvector) |
+| `document_chunks` | Chunked text + vector embeddings (pgvector) |
 | `queries` | Per-turn query log |
 | `retrieval_results` | Which chunks were retrieved for which query |
 | `answers` | Generated answer text |
@@ -665,11 +662,11 @@ flowchart TD
     end
 
     subgraph target ["Target — Phase 0 (doc/phase0.md)"]
-        U2[User] --> IF[Interface Layer\ncli.rs]
-        IF --> AG[Agent Layer\nPlanner / Reasoner / Executor]
-        AG --> RAG[RAG Layer\nretrieve / store / embed / chunk]
-        AG --> LLM[Model Layer\ngenerate]
-        RAG --> DB2[(PostgreSQL\n+ pgvector)]
+        U2[User] --> IF[CLI\ncli.rs]
+        IF --> AG[Agent Layer\nPlanner / Reasoner]
+        AG --> RAG[RAG Layer\nretrieve / store / chunk]
+        AG --> LLM[Model Layer\nApiClient → LLML]
+        RAG --> DB2[(SQLite + FTS5)]
     end
 ```
 
@@ -677,17 +674,17 @@ flowchart TD
 
 | Concern | Current | Target (Phase 0) |
 |---------|---------|-----------------|
-| REPL / input | `cli.rs` direct loop | Interface Layer calls `Agent::run()` |
+| REPL / input | `cli.rs` direct loop | `cli.rs` + `/ingest-file` and `/search` commands |
 | Multi-model routing (server) | `ModelRegistry` + role-based routing ✅ | Done |
 | Per-request temperature (server) | Wired through `generate_from_prompt` ✅ | Done |
 | Role selection (client) | `reason()` / `decide()` used by `Agent` ✅ | Done |
 | Two-step agent loop | `Agent::run_reasoning()` + `run_decision()` ✅ | Done |
 | Query routing | `POST /v1/classify` + `RouteDecision` + `LALA_SMART_ROUTER` ✅ | Done |
 | Telegram bot | classify → direct \| reason→decide + spoiler formatting ✅ | Done |
-| Prompt building | `build_prompt()` in `LLML/api/routes.py` | Agent Layer (Executor/Reasoner) |
-| Retrieval | None | RAG Layer `retrieve(query, k)` |
-| Document ingestion | None | RAG Layer `store(text)` |
-| DB access | `db/connection.rs` declared but unused | RAG Layer only via `PgPool` |
+| Prompt building | `build_prompt()` in `LLML/api/routes.py` | Stays in LLML — `lala` sends structured messages |
+| Retrieval | None | RAG Layer `retrieve(query, k)` via SQLite FTS5 |
+| Document ingestion | None | RAG Layer `store(text)` via SQLite FTS5 |
+| DB access | None | RAG Layer via `rusqlite` (`RagStore`) |
 
 ---
 
@@ -700,7 +697,8 @@ flowchart TD
 | `reqwest` (blocking + json) | HTTP client for LLML API |
 | `serde` / `serde_json` | JSON serialization of ChatMessage arrays |
 | `anyhow` | Error propagation |
-| `sqlx` | PostgreSQL client (declared, not yet active in loop) |
+| `rusqlite` (bundled) | SQLite + FTS5 for RAG storage (Phase 0) |
+| `uuid` | Document/chunk ID generation |
 
 ### LLML (Python)
 | Package | Purpose |

@@ -17,6 +17,7 @@
 | DB crate | `rusqlite` with `bundled` feature | Compiles SQLite + FTS5 in; no system SQLite install required |
 | ID generation | `uuid` v4 | Stable, sortable, collision-free identifiers for documents and chunks |
 | Chunker | Character-based sliding window | 512-char chunks, 64-char overlap — simple, no tokeniser dependency |
+| Duplicate handling | Skip if `(source)` already exists in `documents` | Prevents duplicate chunks; re-ingest by deleting first |
 | Agent wiring | Deferred to Phase 1 | Retrieved chunks injected as a `[system]` context message in `planner.rs` |
 
 ---
@@ -41,7 +42,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     document_id UNINDEXED,
     chunk_index UNINDEXED,
     chunk_text,            -- indexed for BM25
-    token_count UNINDEXED
+    char_count  UNINDEXED  -- character length of chunk_text (not token count)
 );
 ```
 
@@ -72,7 +73,7 @@ pub struct Chunk {
     pub document_id:  String,
     pub chunk_index:  usize,
     pub chunk_text:   String,
-    pub score:        f64,   // BM25 rank returned by SQLite (lower = more relevant)
+    pub score:        f64,   // BM25 rank from SQLite: negative float, more negative = better match
 }
 ```
 
@@ -96,8 +97,13 @@ impl RagStore {
 ### `chunker::chunk`
 
 ```rust
-/// Split `text` into overlapping windows.
+/// Split `text` into overlapping character windows.
 /// Default call: chunk(text, 512, 64)
+///
+/// Edge cases:
+///   - Empty text → empty Vec
+///   - Text shorter than `chunk_size` → single-element Vec containing the full text
+///   - `overlap >= chunk_size` → treated as `overlap = 0` (no overlap)
 pub fn chunk(text: &str, chunk_size: usize, overlap: usize) -> Vec<String>;
 ```
 
@@ -113,7 +119,9 @@ ORDER  BY bm25(chunks_fts)
 LIMIT  ?2
 ```
 
-FTS5's `bm25()` returns a negative float (more negative = better match); results are already in descending relevance order when sorted ascending.
+FTS5's `bm25()` returns a **negative** float — more negative means a better match. `ORDER BY bm25(chunks_fts)` (ascending) therefore returns best-first results. A score of `-3.2` is more relevant than `-1.1`.
+
+**Note on the `MATCH` clause:** FTS5 requires a valid query expression. If the user's query contains special FTS5 characters (`*`, `"`, `OR`, etc.), they should be escaped or the query should be quoted. Phase 0 passes the raw query string directly — this is acceptable for the CLI proof-of-concept, but Phase 1 should sanitise input.
 
 ---
 
@@ -123,7 +131,7 @@ FTS5's `bm25()` returns a negative float (more negative = better match); results
 |------|--------|
 | `lala/Cargo.toml` | Add `rusqlite = { version = "0.32", features = ["bundled"] }` and `uuid = { version = "1", features = ["v4"] }` |
 | `lala/src/main.rs` | Add `mod rag;`, resolve `LALA_DB_PATH` env var, init `RagStore`, thread it to `cli::run()` |
-| `lala/src/cli.rs` | Accept `&RagStore`, add `/ingest-file <path>` and `/search <query>` commands |
+| `lala/src/cli.rs` | Accept `RagStore` (owned or `Arc`), add `/ingest-file <path>` and `/search <query>` commands |
 | `lala/src/rag/mod.rs` | **New** — `RagStore`, `Chunk`, `store()`, `retrieve()`, unit tests |
 | `lala/src/rag/chunker.rs` | **New** — `chunk()` pure function |
 
@@ -135,6 +143,16 @@ FTS5's `bm25()` returns a negative float (more negative = better match); results
 |---------|-----------|
 | `/ingest-file <path>` | Read file at `path`, call `rag.store(filename, path, content)`, print chunk count |
 | `/search <query>` | Call `rag.retrieve(query, 5)`, print each result's index, BM25 score, and a 100-char preview |
+
+### Error handling
+
+| Scenario | Behaviour |
+|----------|-----------|
+| `/ingest-file` — path does not exist | Print `"Error: file not found: <path>"`, continue REPL |
+| `/ingest-file` — empty file | Print `"Warning: file is empty, nothing to ingest"`, continue REPL |
+| `/ingest-file` — file already ingested (same `source`) | Print `"Already ingested: <path> (N chunks). Use /delete-doc <path> first to re-ingest."` |
+| `/search` — empty query | Print `"Usage: /search <query>"`, continue REPL |
+| `/search` — no results | Print `"No results found for: <query>"` |
 
 ---
 
@@ -151,7 +169,7 @@ FTS5's `bm25()` returns a negative float (more negative = better match); results
       │
       ├─► INSERT INTO documents (id, title, source, created_at)
       │
-      └─► INSERT INTO chunks_fts (chunk_id, document_id, chunk_index, chunk_text, token_count)
+      └─► INSERT INTO chunks_fts (chunk_id, document_id, chunk_index, chunk_text, char_count)
               × N rows
 
 
@@ -174,7 +192,10 @@ When the agent loop is ready to consume retrieved context, the integration point
 // Phase 1 addition inside Agent::run_reasoning() or a new run_with_rag()
 ChatMessage {
     role: "system".to_string(),
-    content: format!("[Retrieved context]\n{}", chunks.iter().map(|c| &c.chunk_text).cloned().collect::<Vec<_>>().join("\n---\n")),
+    content: format!(
+        "[Retrieved context]\n{}",
+        chunks.iter().map(|c| c.chunk_text.clone()).collect::<Vec<_>>().join("\n---\n")
+    ),
 }
 ```
 
@@ -185,9 +206,15 @@ No structural changes to `planner.rs` are needed for this — it is a data injec
 ## 10. Acceptance Criteria
 
 - [ ] `cargo check -p lala` — zero errors, zero warnings
-- [ ] `cargo test -p lala` — unit test: store one document, retrieve with a term present in it, assert at least one chunk returned with a non-zero score
+- [ ] `cargo test -p lala` — unit tests:
+  - Store one document, retrieve with a term present in it, assert ≥1 chunk with a negative BM25 score
+  - Store a document, attempt to store with same `source` again — assert duplicate is rejected
+  - Chunker: text shorter than `chunk_size` → returns exactly 1 chunk
+  - Chunker: empty text → returns empty vec
+  - Retrieve with a query matching nothing → returns empty vec
 - [ ] `/ingest-file doc/architecture.md` in the REPL prints the number of chunks stored
 - [ ] `/search layered architecture` returns ranked chunk previews from the ingested file
+- [ ] `/search` with no arguments prints a usage hint
 - [ ] DB file is created at `./lala.db` (or `LALA_DB_PATH`) and persists between REPL sessions
 
 ---
@@ -203,3 +230,25 @@ No structural changes to `planner.rs` are needed for this — it is a data injec
 | Metadata filtering | Phase 2 |
 | Session-scoped retrieval | Phase 1 |
 | `/ingest-url` or directory ingestion | Phase 1 |
+
+---
+
+## 12. Module Independence
+
+The RAG module (`lala/src/rag/`) is designed as a **self-contained, independent module**. It has no dependencies on the agent, CLI, or model layers. Other modules consume it through the public `RagStore` API:
+
+```rust
+// Any module can use the RAG layer through this interface:
+use crate::rag::RagStore;
+
+let store = RagStore::open("./lala.db")?;
+let count = store.store("title", "source", "text content")?;
+let chunks = store.retrieve("search query", 5)?;
+```
+
+This means:
+- The agent layer (Phase 1) can call `store.retrieve()` without knowing about SQLite or FTS5 internals
+- Future modules (HTTP API, background indexer) can call `store.store()` and `store.retrieve()` independently
+- The retrieval backend can be swapped (e.g. to pgvector) without changing any consumer code, as long as the `RagStore` method signatures are preserved
+
+**Phase 1 consideration:** If multiple retrieval backends are needed (e.g. FTS5 + vector), introduce a `RagRetriever` trait at that point. For Phase 0, the concrete `RagStore` struct is sufficient.
