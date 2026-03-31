@@ -230,7 +230,7 @@ input query
 
 ## System Prompt
 
-The system prompt is hardcoded in `cli.rs` and always occupies index 0 of the history:
+The system prompt is hardcoded in `cli/mod.rs` and always occupies index 0 of the history:
 
 ```
 You are a friendly AI assistant named lala.
