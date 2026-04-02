@@ -1,5 +1,6 @@
 mod agent;
 mod cli;
+mod tools;
 
 use rag::RagStore;
 
@@ -20,5 +21,5 @@ fn main() -> anyhow::Result<()> {
     let db_path = std::env::var("LALA_DB_PATH").unwrap_or_else(|_| "./lala.db".to_string());
     let store = RagStore::open(&db_path)?;
 
-    cli::run(&api_url, smart_router, store)
+    cli::run(&api_url, smart_router, &db_path, store)
 }

@@ -8,13 +8,21 @@ use rustyline::error::ReadlineError;
 
 use crate::agent::model::ApiClient;
 use rag::RagStore;
+use tools;
 
 use chat::Chat;
 use commands::CommandResult;
 
-pub fn run(api_url: &str, smart_router: bool, store: RagStore) -> anyhow::Result<()> {
+pub fn run(api_url: &str, smart_router: bool, db_path: &str, store: RagStore) -> anyhow::Result<()> {
     let client = ApiClient::new(api_url);
-    let mut chat = Chat::new(&client, smart_router, &store);
+
+    // Initialize the tool registry
+    let mut tool_registry = tools::ToolRegistry::new();
+    tool_registry.register(Box::new(tools::GetCurrentTimeTool));
+    tool_registry.register(Box::new(tools::FileReaderTool));
+    tool_registry.register(Box::new(crate::tools::RagSearchTool::new(db_path.to_string())));
+
+    let mut chat = Chat::new(&client, smart_router, &store, &tool_registry);
     let mut rl = DefaultEditor::new()?;
 
     print_banner(api_url, smart_router);

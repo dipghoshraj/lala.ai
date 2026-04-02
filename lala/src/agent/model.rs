@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tools::ToolDescription;
 
 /// A single message in the OpenAI-style conversation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -179,5 +180,99 @@ impl ApiClient {
             .map_err(|e| anyhow::anyhow!("classify invalid response: {e}"))?;
 
         Ok(RouteDecision::from_str(&resp.route))
+    }
+}
+
+/// Result of tool selection by the LLM
+#[derive(Debug, Clone)]
+pub struct ToolSelection {
+    pub tool_name: String,
+    pub input: serde_json::Value,
+}
+
+/// Tool selection request for the LLM
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct ToolSelectRequest<'a> {
+    query: &'a str,
+    candidate_tools: &'a [ToolDescription],
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    context: &'a [ChatMessage],
+}
+
+impl ApiClient {
+    /// Ask the reasoning model to select a tool from candidates and
+    /// return the tool name and parsed JSON input parameters.
+    ///
+    /// Returns `Ok(None)` if the model decides no tool is needed.
+    /// Returns `Err(...)` if the request fails or response is malformed.
+    pub fn select_tool(
+        &self,
+        query: &str,
+        candidate_tools: &[ToolDescription],
+        context: &[ChatMessage],
+    ) -> anyhow::Result<Option<ToolSelection>> {
+        // Build the tool selection prompt
+        let tool_descriptions = candidate_tools
+            .iter()
+            .map(|t| format!("- `{}`: {} (keywords: {})", t.name, t.description, t.keywords.join(", ")))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut selection_messages = context.to_vec();
+        selection_messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: format!(
+                r#"You must select a tool to help answer this query, or respond with NO_TOOL.
+
+Available tools:
+{}
+
+Query: {}
+
+Respond with EXACTLY one of:
+1. TOOL_NAME: <tool_name>
+TOOL_INPUT: <json_object>
+
+2. NO_TOOL
+
+"#,
+                tool_descriptions, query
+            ),
+        });
+
+        // Get the model response
+        let response = self.reason(&selection_messages, Some(256))?;
+
+        // Parse the response
+        if response.trim().eq_ignore_ascii_case("NO_TOOL") {
+            return Ok(None);
+        }
+
+        // Extract TOOL_NAME and TOOL_INPUT from the response
+        let mut tool_name = String::new();
+        let mut tool_input_str = String::new();
+
+        for line in response.lines() {
+            if let Some(name) = line.strip_prefix("TOOL_NAME:") {
+                tool_name = name.trim().to_string();
+            } else if let Some(input) = line.strip_prefix("TOOL_INPUT:") {
+                tool_input_str = input.trim().to_string();
+            }
+        }
+
+        if tool_name.is_empty() {
+            return Ok(None);
+        }
+
+        // Parse the JSON input
+        let input: serde_json::Value = if tool_input_str.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&tool_input_str)
+                .unwrap_or_else(|_| serde_json::json!({"raw": tool_input_str}))
+        };
+
+        Ok(Some(ToolSelection { tool_name, input }))
     }
 }

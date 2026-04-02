@@ -1,6 +1,7 @@
 use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
 use crate::agent::planner::{Agent, needs_reasoning};
 use rag::RagStore;
+use tools::ToolRegistry;
 
 use super::display;
 
@@ -17,14 +18,19 @@ pub struct Chat<'a> {
 }
 
 impl<'a> Chat<'a> {
-    pub fn new(client: &'a ApiClient, smart_router: bool, store: &'a RagStore) -> Self {
+    pub fn new(
+        client: &'a ApiClient,
+        smart_router: bool,
+        store: &'a RagStore,
+        tool_registry: &'a ToolRegistry,
+    ) -> Self {
         let history = vec![ChatMessage {
             role: "system".to_string(),
             content: SYSTEM_PROMPT.to_string(),
         }];
 
         Self {
-            agent: Agent::new(client, store),
+            agent: Agent::with_tools(client, store, tool_registry),
             smart_router,
             history,
         }
@@ -65,8 +71,47 @@ impl<'a> Chat<'a> {
     }
 
     fn run_direct(&mut self) {
+        // First, try to run tools if applicable
+        let user_input = match self.history.iter().rfind(|m| m.role == "user") {
+            Some(m) => m.content.clone(),
+            None => {
+                display::error("No user message found.");
+                return;
+            }
+        };
+
+        let tool_result = display::with_spinner("", || {
+            self.agent.run_tool_calls(&user_input, &self.history)
+        });
+
+        let tool_output = match tool_result {
+            Ok(Some(output)) => {
+                display::print_section("Retrieved Data", display::BOLD_YELLOW, display::DIM_YELLOW, &output);
+                Some(output)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                display::warn(&format!("Tool execution error: {e} — proceeding without tools."));
+                None
+            }
+        };
+
+        // Build context string that combines tool output if available
+        let context_str = tool_output;
+        let ctx_ref = context_str.as_deref();
+
         let result = display::with_spinner("thinking", || {
-            self.agent.run_direct(&self.history)
+            let mut history_with_context = self.history.clone();
+            
+            // If we have tool output, inject it as a system message
+            if let Some(ctx) = ctx_ref {
+                history_with_context.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: format!("[Tool output]\n{}", ctx),
+                });
+            }
+
+            self.agent.run_direct(&history_with_context)
         });
 
         match result {
@@ -94,6 +139,23 @@ impl<'a> Chat<'a> {
             }
         };
 
+        // Try to run tools if applicable
+        let tool_result = display::with_spinner("", || {
+            self.agent.run_tool_calls(&input, &self.history)
+        });
+
+        let tool_output = match tool_result {
+            Ok(Some(output)) => {
+                display::print_section("Retrieved Data", display::BOLD_YELLOW, display::DIM_YELLOW, &output);
+                Some(output)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                display::warn(&format!("Tool execution error: {e} — proceeding without tools."));
+                None
+            }
+        };
+
         let chunks = match display::with_spinner("retrieving", || {
             self.agent.retrieve_context(&input)
         }) {
@@ -109,17 +171,21 @@ impl<'a> Chat<'a> {
             display::print_sources(&chunks);
         }
 
-        // Build context string for LLM injection.
-        let context_str = if chunks.is_empty() {
+        // Build context string combining RAG chunks and tool output
+        let mut context_parts = Vec::new();
+
+        if let Some(tool_out) = &tool_output {
+            context_parts.push(format!("[Tool output]\n{}", tool_out));
+        }
+
+        for chunk in &chunks {
+            context_parts.push(chunk.chunk_text.clone());
+        }
+
+        let context_str = if context_parts.is_empty() {
             None
         } else {
-            Some(
-                chunks
-                    .iter()
-                    .map(|c| c.chunk_text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n---\n"),
-            )
+            Some(context_parts.join("\n---\n"))
         };
         let ctx_ref = context_str.as_deref();
 

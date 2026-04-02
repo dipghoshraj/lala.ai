@@ -1,5 +1,6 @@
 use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
 use rag::RagStore;
+use tools::ToolRegistry;
 
 // ── Query classifier ──────────────────────────────────────────────────────────
 
@@ -92,11 +93,28 @@ const DECISION_SYSTEM: &str =
 pub struct Agent<'a> {
     client: &'a ApiClient,
     store: &'a RagStore,
+    tool_registry: Option<&'a ToolRegistry>,
 }
 
 impl<'a> Agent<'a> {
     pub fn new(client: &'a ApiClient, store: &'a RagStore) -> Self {
-        Self { client, store }
+        Self {
+            client,
+            store,
+            tool_registry: None,
+        }
+    }
+
+    pub fn with_tools(
+        client: &'a ApiClient,
+        store: &'a RagStore,
+        tool_registry: &'a ToolRegistry,
+    ) -> Self {
+        Self {
+            client,
+            store,
+            tool_registry: Some(tool_registry),
+        }
     }
 
     /// Retrieve relevant chunks from the RAG store for the given query.
@@ -214,6 +232,62 @@ impl<'a> Agent<'a> {
                 } else {
                     RouteDecision::Direct
                 }
+            }
+        }
+    }
+
+    /// Run tool selection and execution.
+    /// 
+    /// If no tool registry is available, returns None.
+    /// If keyword matching finds no candidates, returns None.
+    /// Otherwise, asks the LLM to select a tool and executes it.
+    pub fn run_tool_calls(
+        &self,
+        query: &str,
+        history: &[ChatMessage],
+    ) -> anyhow::Result<Option<String>> {
+        // If no tool registry is set, skip tool selection entirely
+        let registry = match &self.tool_registry {
+            Some(reg) => reg,
+            None => return Ok(None),
+        };
+
+        // First pass: keyword pre-filter to avoid unnecessary LLM calls
+        let candidate_names = registry.keyword_candidates(query);
+        if candidate_names.is_empty() {
+            return Ok(None);
+        }
+
+        // Get descriptions for the candidate tools
+        let candidate_descriptions = registry.descriptions_for(&candidate_names);
+        if candidate_descriptions.is_empty() {
+            return Ok(None);
+        }
+
+        // Ask the LLM to select a tool from candidates
+        match self
+            .client
+            .select_tool(query, &candidate_descriptions, history)?
+        {
+            Some(selection) => {
+                // Execute the selected tool
+                match registry.get(&selection.tool_name) {
+                    Some(tool) => {
+                        let result = tool.execute(selection.input)?;
+                        Ok(Some(result))
+                    }
+                    None => {
+                        eprintln!(
+                            "[tools] tool not found: {}",
+                            selection.tool_name
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+            None => {
+                // LLM decided no tool is needed
+                Ok(None)
             }
         }
     }
