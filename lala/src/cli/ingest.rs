@@ -166,15 +166,10 @@ fn ingest_single_file(store: &RagStore, client: &ApiClient, path: &str) -> Inges
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
 
-    match store.store(&title, path, &content) {
-        Ok(count) => {
-            // Extract memory blocks using LLM
-            let extractor = LlmMemoryExtractor::new(client);
-            if let Err(e) = store.extract_memory_from_source(path, &extractor) {
-                display::warn(&format!("Memory extraction failed for {}: {}", path, e));
-            }
-            IngestResult::Ok(count)
-        }
+    let extractor = LlmMemoryExtractor::new(client);
+
+    match store.ingest(&title, path, &content, Some(&extractor)) {
+        Ok(count) => IngestResult::Ok(count),
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("Already ingested") {

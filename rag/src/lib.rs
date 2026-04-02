@@ -143,6 +143,21 @@ impl RagStore {
         Ok(chunks.len())
     }
 
+    /// Ingest a document and optionally run memory extraction from an LLM extractor.
+    ///
+    /// This keeps CLI ingestion as a thin interface and moves chunk creation,
+    /// document persist, and memory block saving into the Rag layer.
+    pub fn ingest(&self, title: &str, source: &str, text: &str, extractor: Option<&dyn MemoryExtractor>) -> Result<usize> {
+        let count = self.store(title, source, text)?;
+
+        if let Some(extractor) = extractor {
+            // best effort; do not fail ingestion if extraction has an issue
+            let _ = self.extract_memory_from_source(source, extractor);
+        }
+
+        Ok(count)
+    }
+
     /// BM25 full-text search — return top `k` chunks ordered by relevance.
     pub fn retrieve(&self, query: &str, k: usize) -> Result<Vec<Chunk>> {
         let mut stmt = self.conn.prepare(
