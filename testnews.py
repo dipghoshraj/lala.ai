@@ -134,7 +134,6 @@ def fetch_full_article(url):
         print(f"Error fetching {url}: {e}")
         return None
 
-
 def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     """Split text into overlapping chunks."""
     chunks = []
@@ -159,8 +158,8 @@ def build_news_dataset():
         time.sleep(DELAY_BETWEEN_REQUESTS)  # polite scraping
 
         if full_content:
-            print(f"Fetched full content for: {item['title']} (length: {len(full_content['text'])})")
-            chunks = chunk_text(full_content['text'])
+            print(f"Fetched full content for: {item['title']} (length: {full_content['text']})")
+            chunks = chunk_text(full_content["text"])
 
             enriched_articles.append({
                 "id": generate_id(item["link"]),
@@ -171,20 +170,11 @@ def build_news_dataset():
                 "content": full_content["text"],
                 "authors": full_content["authors"],
                 "image": full_content["top_image"],
-                "source": "BBC News",
-                "chunked_text": chunks,
-                "chunk_count": len(chunks),
+                "source": "Yahoo News",
+                "chunked_text": chunks
             })
 
     return enriched_articles
-
-
-def save_news_json(news_data, file_path="news_data.json"):
-    import json
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(news_data, f, ensure_ascii=False, indent=2)
-    print(f"Saved {len(news_data)} articles to {file_path}")
-
 
 # ----------- Main --------------------
 if __name__ == "__main__":
