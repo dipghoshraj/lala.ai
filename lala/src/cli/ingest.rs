@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::agent::memory::LlmMemoryExtractor;
+use crate::agent::model::ApiClient;
 use rag::RagStore;
 
 use super::display;
@@ -48,7 +50,7 @@ fn collect_files(dir: &Path, out: &mut Vec<String>) -> anyhow::Result<()> {
 }
 
 /// `/ingest [path]` — batch-ingest all files in the given directory (or the default ingest directory).
-pub fn ingest_all(store: &RagStore, args: &str) {
+pub fn ingest_all(store: &RagStore, client: &ApiClient, args: &str) {
     let dir = if args.is_empty() { ingest_dir() } else { args.to_string() };
 
     let files = match scan_ingest_dir(&dir) {
@@ -83,7 +85,7 @@ pub fn ingest_all(store: &RagStore, args: &str) {
 
         display::progress(i + 1, total, &filename);
 
-        match ingest_single_file(store, file_path) {
+        match ingest_single_file(store, client, file_path) {
             IngestResult::Ok(count) => {
                 display::success(&format!("{filename} → {count} chunks"));
                 ingested += 1;
@@ -122,7 +124,7 @@ pub fn ingest_all(store: &RagStore, args: &str) {
 }
 
 /// `/ingest-file <path>` — ingest a single file by explicit path.
-pub fn ingest_file(store: &RagStore, path: &str) {
+pub fn ingest_file(store: &RagStore, client: &ApiClient, path: &str) {
     if path.is_empty() {
         println!("Usage: /ingest-file <path>\n");
         return;
@@ -133,7 +135,7 @@ pub fn ingest_file(store: &RagStore, path: &str) {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
 
-    match ingest_single_file(store, path) {
+    match ingest_single_file(store, client, path) {
         IngestResult::Ok(count) => display::success(&format!("{filename} → {count} chunks")),
         IngestResult::Skipped(reason) => display::warn(&format!("{filename}: {reason}")),
         IngestResult::Err(e) => display::error(&format!("{filename}: {e}")),
@@ -149,7 +151,7 @@ enum IngestResult {
     Err(String),
 }
 
-fn ingest_single_file(store: &RagStore, path: &str) -> IngestResult {
+fn ingest_single_file(store: &RagStore, client: &ApiClient, path: &str) -> IngestResult {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => return IngestResult::Err(format!("cannot read file: {e}")),
@@ -165,7 +167,14 @@ fn ingest_single_file(store: &RagStore, path: &str) -> IngestResult {
         .unwrap_or_else(|| path.to_string());
 
     match store.store(&title, path, &content) {
-        Ok(count) => IngestResult::Ok(count),
+        Ok(count) => {
+            // Extract memory blocks using LLM
+            let extractor = LlmMemoryExtractor::new(client);
+            if let Err(e) = store.extract_memory_from_source(path, &extractor) {
+                display::warn(&format!("Memory extraction failed for {}: {}", path, e));
+            }
+            IngestResult::Ok(count)
+        }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("Already ingested") {
@@ -176,3 +185,4 @@ fn ingest_single_file(store: &RagStore, path: &str) -> IngestResult {
         }
     }
 }
+

@@ -104,22 +104,63 @@ impl<'a> Chat<'a> {
             }
         };
 
-        // Display retrieved sources if any were found.
+        // Also retrieve structured memory blocks.
+        let memory_blocks = match display::with_spinner("retrieving memory", || {
+            self.agent.retrieve_memory_context(&input)
+        }) {
+            Ok(m) => m,
+            Err(e) => {
+                display::warn(&format!("Memory retrieval error: {e} — proceeding without context."));
+                Vec::new()
+            }
+        };
+
+        // Display retrieved sources and memory if any were found.
         if !chunks.is_empty() {
             display::print_sources(&chunks);
         }
+        if !memory_blocks.is_empty() {
+            let sep = "─".repeat(display::SECTION_WIDTH);
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!("  {}Structured Memory Blocks:{}", display::BOLD_GREEN, display::RESET);
+            for block in &memory_blocks {
+                println!("    {}- source:{} {} chunk #{}", display::CYAN, display::RESET, block.source, block.chunk_index);
+                println!("      {}FACTS:{} {}", display::CYAN, display::RESET, block.facts);
+                println!("      {}CAPABILITIES:{} {}", display::CYAN, display::RESET, block.capabilities);
+                println!("      {}CONSTRAINTS:{} {}", display::CYAN, display::RESET, block.constraints);
+            }
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+        }
 
         // Build context string for LLM injection.
-        let context_str = if chunks.is_empty() {
+        let context_str = if chunks.is_empty() && memory_blocks.is_empty() {
             None
         } else {
-            Some(
-                chunks
-                    .iter()
-                    .map(|c| c.chunk_text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n---\n"),
-            )
+            let mut ctx = String::new();
+            if !chunks.is_empty() {
+                ctx.push_str("--- Retrieved Chunks ---\n");
+                ctx.push_str(
+                    &chunks
+                        .iter()
+                        .map(|c| c.chunk_text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n---\n"),
+                );
+                ctx.push_str("\n");
+            }
+            if !memory_blocks.is_empty() {
+                ctx.push_str("--- Retrieved Structured Memory Blocks ---\n");
+                for block in &memory_blocks {
+                    ctx.push_str(&format!(
+                        "FACTS: {}\nCAPABILITIES: {}\nCONSTRAINTS: {}\nTEXT: {}\n---\n",
+                        block.facts,
+                        block.capabilities,
+                        block.constraints,
+                        block.chunk_text
+                    ));
+                }
+            }
+            Some(ctx)
         };
         let ctx_ref = context_str.as_deref();
 

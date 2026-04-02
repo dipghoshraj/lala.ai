@@ -1,3 +1,4 @@
+use crate::agent::model::ApiClient;
 use rag::RagStore;
 
 use super::display;
@@ -6,7 +7,7 @@ use super::ingest;
 /// Dispatch a `/`-prefixed command. Returns `true` if it was handled.
 ///
 /// Returns `false` for unknown commands so the REPL can treat them as chat input.
-pub fn dispatch(input: &str, store: &RagStore) -> CommandResult {
+pub fn dispatch(input: &str, store: &RagStore, client: &ApiClient) -> CommandResult {
     let (cmd, args) = split_command(input);
 
     match cmd {
@@ -21,15 +22,19 @@ pub fn dispatch(input: &str, store: &RagStore) -> CommandResult {
             CommandResult::Handled
         }
         "/ingest" => {
-            ingest::ingest_all(store, args);
+            ingest::ingest_all(store, client, args);
             CommandResult::Handled
         }
         "/ingest-file" => {
-            ingest::ingest_file(store, args);
+            ingest::ingest_file(store, client, args);
             CommandResult::Handled
         }
         "/search" => {
             search(store, args);
+            CommandResult::Handled
+        }
+        "/memory-search" => {
+            memory_search(store, args);
             CommandResult::Handled
         }
         _ => CommandResult::NotACommand,
@@ -80,6 +85,11 @@ fn print_help() {
     );
     println!(
         "  {}/search <query>{}   Search ingested documents (BM25)",
+        display::BOLD_CYAN,
+        display::RESET,
+    );
+    println!(
+        "  {}/memory-search <query>{}   Search structured memory blocks",
         display::BOLD_CYAN,
         display::RESET,
     );
@@ -149,6 +159,53 @@ fn search(store: &RagStore, query: &str) {
         }
         Err(e) => {
             display::error(&format!("Search error: {e}"));
+            println!();
+        }
+    }
+}
+
+// ── /memory-search ─────────────────────────────────────────────────────────────
+
+fn memory_search(store: &RagStore, query: &str) {
+    if query.is_empty() {
+        println!("Usage: /memory-search <query>\n");
+        return;
+    }
+
+    match store.retrieve_memory_blocks(query, 5) {
+        Ok(blocks) if blocks.is_empty() => {
+            display::warn(&format!("No memory blocks found for: {query}"));
+            println!();
+        }
+        Ok(blocks) => {
+            println!();
+            let sep = "─".repeat(display::SECTION_WIDTH);
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            for (i, b) in blocks.iter().enumerate() {
+                println!(
+                    "  {}[{}]{} chunk #{} source: {}",
+                    display::BOLD,
+                    i + 1,
+                    display::RESET,
+                    b.chunk_index,
+                    b.source
+                );
+                println!("    {}FACTS:{} {}", display::CYAN, display::RESET, b.facts);
+                println!("    {}CAPABILITIES:{} {}", display::CYAN, display::RESET, b.capabilities);
+                println!("    {}CONSTRAINTS:{} {}", display::CYAN, display::RESET, b.constraints);
+                println!(
+                    "    {}TEXT:{} {}...",
+                    display::DIM,
+                    display::RESET,
+                    b.chunk_text.chars().take(120).collect::<String>()
+                );
+                println!();
+            }
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!();
+        }
+        Err(e) => {
+            display::error(&format!("Memory-search error: {e}"));
             println!();
         }
     }

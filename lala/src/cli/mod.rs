@@ -33,7 +33,7 @@ pub fn run(api_url: &str, smart_router: bool, store: RagStore) -> anyhow::Result
         let _ = rl.add_history_entry(&input);
 
         if input.starts_with('/') {
-            match commands::dispatch(&input, &store) {
+            match commands::dispatch(&input, &store, &client) {
                 CommandResult::Exit => break,
                 CommandResult::Clear => {
                     chat.clear();

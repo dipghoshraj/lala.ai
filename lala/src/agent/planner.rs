@@ -118,6 +118,20 @@ impl<'a> Agent<'a> {
         self.store.retrieve(&fts_query, 5)
     }
 
+    /// Retrieve structured memory blocks for the given query.
+    pub fn retrieve_memory_context(&self, query: &str) -> anyhow::Result<Vec<rag::MemoryBlock>> {
+        let sanitized: String = query
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+            .collect();
+        let terms: Vec<&str> = sanitized.split_whitespace().collect();
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fts_query = terms.join(" OR ");
+        self.store.retrieve_memory_blocks(&fts_query, 5)
+    }
+
     /// Step 1 — send the full history to the reasoning model.
     /// Returns the internal analysis string; does not modify history.
     /// When `context` is provided, it is appended to the reasoning system prompt.
