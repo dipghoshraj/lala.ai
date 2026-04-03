@@ -1,20 +1,3 @@
-# LLML.Dockerfile — LLML-py local LLM inference server (CPU build)
-#
-# Build:
-#   docker build -f LLML.Dockerfile -t lala-llml .
-#
-# Run:
-#   docker run -p 3000:3000 \
-#     -v /path/to/your/models:/models \
-#     -v ./ai-config.yaml:/app/ai-config.yaml \
-#     lala-llml
-#
-# The ai-config.yaml modelPath values must point to paths inside /models,
-# e.g.  modelPath: "/models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
-#
-# GPU (CUDA) build — uncomment the CMAKE_ARGS line below and use a
-# nvidia/cuda base image instead.
-
 # ── Stage 1: build ───────────────────────────────────────────────────────────
 FROM python:3.11-slim AS builder
 

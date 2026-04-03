@@ -14,6 +14,27 @@ PostgreSQL + pgvector is provisioned for RAG storage (Phase 1+).
 
 ## Quick Start
 
+### What `lala.ai` does
+
+`lala.ai` is an agentic RAG system that combines:
+- `lala` (Rust CLI): local REPL with clever query routing (`direct` vs `reasoning`), document search, and ingestion workflow
+- `LLML` (Python FastAPI): GGUF model inference (`/v1/chat/completions`, `/v1/classify`, `/v1/models`)
+- `telegram` bot (optional): same pipeline exposed via Telegram
+
+It routes questions through `decision` only for fast replies, or through `reasoning` + `decision` for long-form multi-step answers.
+
+### ola CLI commands (enter `/help` in REPL for this list)
+
+- `/ingest [dir]`       : batch ingest text/docs from directory (default `./ingest/`)
+- `/ingest-file <path>` : ingest a single file
+- `/ingest-news <url>`  : ingest RSS articles
+- `/search <query>`     : search document memory with BM25
+- `/memory-search <query>` : search structured memory blocks
+- `/status`             : show store stats (`documents`, `chunks`, `ingest dir`)
+- `/clear`              : reset conversation history
+- `/help`               : show commands
+- `/exit` or `/quit`    : exit the REPL
+
 ### 1. Start the inference server
 
 **Option A — Docker (recommended)**
@@ -361,3 +382,47 @@ models:
 | `python-telegram-bot` | Bot framework |
 | `requests` | Blocking HTTP client for LLML |
 | `python-dotenv` | `.env` loading |
+
+---
+
+## Key Conventions
+
+### Error handling
+- Rust: propagate with `anyhow::Result`; avoid `.unwrap()` in new code
+- Python: raise meaningful exceptions with context; catch and log in API routes
+
+### Thread safety (LLML)
+- `ModelRunner` wraps `llama-cpp-python`'s `Llama` object
+- **Never block the FastAPI event loop**: always run inference inside `asyncio.to_thread()`
+- Each HTTP request runs on a thread pool, not blocking the async loop
+
+### Configuration scope
+- `ai-config.yaml` is LLML's concern only — `lala` CLI never reads it
+- Clients select models by **role string** via the API: `"reasoning"` and `"decision"`
+- Role strings must match keys registered in `ModelRegistry`
+
+### Role strings (fixed)
+- `"reasoning"` — multi-step analysis, code review, comparisons
+- `"decision"` — fast replies, social/API patterns, conversational replies
+
+### RAG (Phase 0)
+- Standalone `rag/` library crate with zero dependencies on `lala`, agent, or model layers
+- Consumers depend via `rag = { path = "../rag" }` and call `RagStore` public API
+- SQLite + FTS5 for BM25 keyword retrieval (no neural embeddings yet)
+- Planned: PostgreSQL + pgvector for Phase 1+ (vector search)
+
+### Cargo workspace
+- Root `Cargo.toml` defines `members = ["lala", "rag"]`
+- Both crates share a workspace lockfile
+- Build both: `cargo build --workspace`
+
+### Prompt format (Mistral)
+`build_prompt()` in `LLML/api/routes.py` produces Mistral/Llama instruction format:
+```
+<s>[INST] {system_prompt}\n\n{first_user_msg} [/INST] {assistant_reply} </s>[INST] {next_user} [/INST]...
+```
+Generation stops early if `[/INST]` appears (prevents prompt leakage).
+
+### Message sliding (context window management)
+- `slide_messages()` in `LLML/api/routes.py` evicts oldest user/assistant pairs if token count exceeds `n_ctx`
+- System prompt always pinned at index 0
