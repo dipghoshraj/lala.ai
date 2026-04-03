@@ -5,9 +5,6 @@ mod ingest;
 
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
-use std::io::{self, Write};
-use std::thread;
-use std::time::Duration;
 
 use crate::agent::model::ApiClient;
 use rag::RagStore;
@@ -61,7 +58,6 @@ pub fn run(api_url: &str, smart_router: bool, store: RagStore, config: crate::co
 
 fn print_banner(api_url: &str, smart_router: bool) {
     println!();
-    animate_lala_logo();
 
     let sep = "─".repeat(display::SECTION_WIDTH);
     println!("{}{}{}", display::DIM, sep, display::RESET);
@@ -81,24 +77,5 @@ fn print_banner(api_url: &str, smart_router: bool) {
         display::DIM, display::RESET,
     );
     println!("{}{}{}", display::DIM, sep, display::RESET);
-    println!();
-}
-
-fn animate_lala_logo() {
-    let frames = [
-        "    _      _      _      _   ",
-        "   | |    | |    | |    | |  ",
-        "   | | ___| |  __| | ___| |  ",
-        r"   | |/ _ \ | / _` |/ _ \ |  ",
-        "   | |  __/ || (_| |  __/ |  ",
-        r"   |_|\___|_| \__,_|\___|_|  ",
-    ];
-    for frame in frames.iter() {
-        print!("  {}{}{}\r", display::BOLD_CYAN, frame, display::RESET);
-        io::stdout().flush().ok();
-        thread::sleep(Duration::from_millis(130));
-    }
-    println!();
-    println!("  {}L A L A{}", display::BOLD_YELLOW, display::RESET);
     println!();
 }
