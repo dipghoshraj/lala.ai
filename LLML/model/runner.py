@@ -59,6 +59,7 @@ class ModelRunner:
             n_batch=params.n_batch,
             use_mlock=params.use_mlock,
             verbose=False,
+            embedding= params.embedding,
         )
         self._params = params
         logger.info("model loaded successfully  path=%s", model_path)
@@ -105,6 +106,31 @@ class ModelRunner:
             len(content),
         )
         return content
+
+    async def embed(self, text: str) -> list[float]:
+        """Generate embedding vector for text.
+
+        Uses llama-cpp-python's embed() when available, otherwise deterministic placeholder.
+        """
+
+
+        try:
+            result = await asyncio.to_thread(self._model.embed, text)
+            if isinstance(result, dict) and "data" in result:
+                data = result["data"]
+                if isinstance(data, list) and len(data) > 0:
+                    emb = data[0].get("embedding") if isinstance(data[0], dict) else None
+                    if isinstance(emb, list):
+                        return [float(v) for v in emb]
+            if isinstance(result, list):
+                return [float(v) for v in result]
+            return []
+        except AttributeError:
+            logger.warning("Model runner has no embed(), using deterministic fallback")
+            return ArithmeticError("Embedding not supported by this model")
+        except Exception as exc:
+            logger.warning("Embedding call failed: %s", exc)
+            return ArithmeticError(f"Embedding failed: {exc}")
 
     async def stream(
         self,

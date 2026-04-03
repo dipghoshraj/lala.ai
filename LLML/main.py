@@ -67,7 +67,7 @@ def build_app(config_path: str | Path) -> FastAPI:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="LLML-py — Local LLM inference server (Python/FastAPI)"
+        description="LLML — Local LLM inference server (Python/FastAPI)"
     )
     parser.add_argument(
         "--config",

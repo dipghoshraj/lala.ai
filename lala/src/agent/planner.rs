@@ -1,4 +1,5 @@
 use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
+use crate::config::LalaConfig;
 use rag::RagStore;
 
 // ── Token estimation ──────────────────────────────────────────────────────────
@@ -7,6 +8,18 @@ use rag::RagStore;
 fn estimate_tokens(text: &str) -> usize {
     (text.len() as f32 / 3.0).ceil() as usize
 }
+
+/// The fallback context token budget when no env var is set.
+pub const DEFAULT_CONTEXT_TOKEN_BUDGET: usize = 800;
+
+/// Default maximum chunk results to retrieve from RAG (before token limiting).
+pub const DEFAULT_RAG_FETCH_LIMIT: usize = 32;
+
+/// Minimum chunk results to retrieve.
+const MIN_RAG_FETCH_LIMIT: usize = 5;
+
+/// Maximum chunk results to retrieve to avoid excessive query payload.
+const MAX_RAG_FETCH_LIMIT: usize = 200;
 
 /// Limit retrieved chunks to fit within a token budget.
 /// Returns the chunks that fit, ordered by relevance (highest first).
@@ -106,28 +119,6 @@ pub fn needs_reasoning(input: &str) -> bool {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// System prompt injected for the reasoning step.
-///
-/// The reasoning model's job is to silently think through the query —
-/// it never speaks directly to the user.
-const REASONING_SYSTEM: &str =
-    "You are an internal reasoning engine. \
-     Analyse the user's query carefully. \
-     Think step by step: what is the user asking, what context matters, \
-     and what would make the best answer. \
-     Output your analysis concisely — this will be used to guide the final response, \
-     not shown to the user.";
-
-/// System prompt for the decision step.
-///
-/// The decision model receives the original conversation history plus the
-/// reasoning output as extra context, and produces the reply the user sees.
-const DECISION_SYSTEM: &str =
-    "You are lala, a friendly and concise AI assistant. \
-     You have been given an internal analysis to guide you. \
-     Use it to inform your answer but do NOT repeat or quote it. \
-     Respond directly to the user in clear, natural language.";
-
 /// Drives a single user turn through the two-step reasoning→decision pipeline.
 ///
 /// `run_reasoning` and `run_decision` are exposed as separate public steps so
@@ -136,11 +127,37 @@ const DECISION_SYSTEM: &str =
 pub struct Agent<'a> {
     client: &'a ApiClient,
     store: &'a RagStore,
+    config: LalaConfig,
 }
 
 impl<'a> Agent<'a> {
-    pub fn new(client: &'a ApiClient, store: &'a RagStore) -> Self {
-        Self { client, store }
+    pub fn new(client: &'a ApiClient, store: &'a RagStore, config: LalaConfig) -> Self {
+        Self { client, store, config }
+    }
+
+    /// Returns the context token budget used by the CLI for RAG context injection.
+    /// Can be overridden via env var `LALA_CONTEXT_TOKEN_BUDGET`.
+    pub fn context_token_budget() -> usize {
+        std::env::var("LALA_CONTEXT_TOKEN_BUDGET")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_CONTEXT_TOKEN_BUDGET)
+    }
+
+    /// Compute the number of chunk results to request from RAG based on context size.
+    /// Can be overridden via `LALA_RAG_FETCH_LIMIT`.
+    pub fn rag_fetch_limit() -> usize {
+        std::env::var("LALA_RAG_FETCH_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .or_else(|| {
+                // Use context window (including 2048 etc) to choose a safer retrieval size.
+                let context_tokens = std::env::var("LALA_N_CTX")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok());
+                context_tokens.map(|ct| (ct / 64).max(MIN_RAG_FETCH_LIMIT).min(MAX_RAG_FETCH_LIMIT))
+            })
+            .unwrap_or(DEFAULT_RAG_FETCH_LIMIT)
     }
 
     /// Retrieve relevant chunks from the RAG store for the given query.
@@ -159,7 +176,7 @@ impl<'a> Agent<'a> {
             return Ok(Vec::new());
         }
         let fts_query = terms.join(" OR ");
-        self.store.retrieve(&fts_query, 5)
+        self.store.retrieve(&fts_query, Self::rag_fetch_limit())
     }
 
     /// Retrieve structured memory blocks for the given query.
@@ -173,7 +190,8 @@ impl<'a> Agent<'a> {
             return Ok(Vec::new());
         }
         let fts_query = terms.join(" OR ");
-        self.store.retrieve_memory_blocks(&fts_query, 5)
+        self.store
+            .retrieve_memory_blocks(&fts_query, Self::rag_fetch_limit())
     }
 
     /// Step 1 — send the full history to the reasoning model.
@@ -184,13 +202,14 @@ impl<'a> Agent<'a> {
         history: &[ChatMessage],
         context: Option<&str>,
     ) -> anyhow::Result<String> {
+        let base = &self.config.reasoning_system_prompt;
         let system = match context {
             Some(ctx) => format!(
                 "{}\n\n--- Retrieved Context ---\n{}\n--- End Context ---\n\n\
                  Use the retrieved context above to inform your analysis when relevant.",
-                REASONING_SYSTEM, ctx
+                base, ctx
             ),
-            None => REASONING_SYSTEM.to_string(),
+            None => base.clone(),
         };
         let reasoning_history = Self::replace_system(history, &system);
         self.client.reason(&reasoning_history, Some(512))
@@ -205,13 +224,14 @@ impl<'a> Agent<'a> {
         analysis: &str,
         context: Option<&str>,
     ) -> anyhow::Result<String> {
+        let base = &self.config.decision_system_prompt;
         let system = match context {
             Some(ctx) => format!(
                 "{}\n\n--- Retrieved Context ---\n{}\n--- End Context ---\n\n\
                  Use the retrieved context above to inform your answer when relevant.",
-                DECISION_SYSTEM, ctx
+                base, ctx
             ),
-            None => DECISION_SYSTEM.to_string(),
+            None => base.clone(),
         };
 
         let last_user = history
@@ -281,13 +301,14 @@ impl<'a> Agent<'a> {
     /// Used for simple or conversational queries classified by `classify_query()`.
     /// When `context` is provided, it is appended to the decision system prompt.
     pub fn run_direct(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<String> {
+        let base = &self.config.decision_system_prompt;
         let system = match context {
             Some(ctx) => format!(
                 "{}\n\n--- Retrieved Context ---\n{}\n--- End Context ---\n\n\
                  Use the retrieved context above to inform your answer when relevant.",
-                DECISION_SYSTEM, ctx
+                base, ctx
             ),
-            None => DECISION_SYSTEM.to_string(),
+            None => base.clone(),
         };
         let decision_messages = Self::replace_system(history, &system);
         self.client.decide(&decision_messages, Some(256))

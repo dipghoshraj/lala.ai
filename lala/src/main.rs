@@ -1,9 +1,13 @@
 mod agent;
 mod cli;
+mod config;
 
+use crate::config::LalaConfig;
 use rag::RagStore;
 
 fn main() -> anyhow::Result<()> {
+    let config = LalaConfig::load(None)?;
+
     // API URL from CLI arg, then env var, then default.
     let api_url = std::env::args()
         .nth(1)
@@ -20,5 +24,5 @@ fn main() -> anyhow::Result<()> {
     let db_path = std::env::var("LALA_DB_PATH").unwrap_or_else(|_| "./lala.db".to_string());
     let store = RagStore::open(&db_path)?;
 
-    cli::run(&api_url, smart_router, store)
+    cli::run(&api_url, smart_router, store, config)
 }

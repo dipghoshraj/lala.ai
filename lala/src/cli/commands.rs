@@ -1,4 +1,5 @@
 use crate::agent::model::ApiClient;
+use crate::agent::planner::Agent;
 use rag::RagStore;
 
 use super::display;
@@ -134,7 +135,7 @@ fn search(store: &RagStore, query: &str) {
         return;
     }
 
-    match store.retrieve(query, 5) {
+    match store.retrieve(query, Agent::rag_fetch_limit()) {
         Ok(chunks) if chunks.is_empty() => {
             display::warn(&format!("No results found for: {query}"));
             println!();
@@ -181,7 +182,7 @@ fn memory_search(store: &RagStore, query: &str) {
         return;
     }
 
-    match store.retrieve_memory_blocks(query, 5) {
+    match store.retrieve_memory_blocks(query, Agent::rag_fetch_limit()) {
         Ok(blocks) if blocks.is_empty() => {
             display::warn(&format!("No memory blocks found for: {query}"));
             println!();

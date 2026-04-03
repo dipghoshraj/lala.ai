@@ -27,6 +27,7 @@ class ModelParams:
     n_ctx: int = 512
     n_batch: int = 512
     use_mlock: bool = False
+    embedding: bool = False
 
 
 @dataclass
@@ -117,7 +118,9 @@ def params_from_config(parameters: list[Parameter]) -> ModelParams:
         n_ctx=int(get("n_ctx", 512.0)),
         n_batch=int(get("n_batch", 512.0)),
         use_mlock=get("use_mlock", 0.0) != 0.0,
+        embedding=get("embedding", 0.0) != 0.0,
     )
+
 
 
 def load_config(path: str | Path) -> AiConfig:

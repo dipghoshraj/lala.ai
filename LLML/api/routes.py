@@ -84,6 +84,11 @@ class ClassifyResponse(BaseModel):
     route: str          # "direct" | "reasoning"
     confidence: str     # "llm" | "heuristic"
 
+class EmbeddingsRequest(BaseModel):
+    model: str
+    input: list[str]
+
+
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
 
@@ -199,6 +204,36 @@ async def list_models(request: Request) -> JSONResponse:
     registry = request.app.state.registry
     data = [{"id": role, "object": "model"} for role in registry.roles()]
     return JSONResponse({"object": "list", "data": data})
+
+
+@router.post("/v1/embeddings")
+async def embeddings(request: Request, req: EmbeddingsRequest) -> JSONResponse:
+    if not req.input:
+        return JSONResponse({"error": "input cannot be empty"}, status_code=400)
+
+    model_role = req.model or "embedding"
+    registry = request.app.state.registry
+    runner = registry.get(model_role)
+    if runner is None:
+        available = ", ".join(registry.roles())
+        return JSONResponse(
+            {"error": f"unknown model role '{model_role}'. Available: {available}"},
+            status_code=400,
+        )
+
+    data = []
+    for idx, text in enumerate(req.input):
+        embedding = await runner.embed(text)
+        data.append({
+            "object": "embedding",
+            "index": idx,
+            "embedding": embedding,
+        })
+
+    return JSONResponse({
+        "object": "list",
+        "data": data,
+    })
 
 
 @router.post("/v1/chat/completions", response_model=None)

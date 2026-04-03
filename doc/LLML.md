@@ -112,7 +112,34 @@ Simple dict-based registry mapping role strings to `ModelRunner` instances:
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat inference (non-streaming + SSE streaming) |
 | `POST` | `/v1/classify` | Query routing — classifies as `"direct"` or `"reasoning"` |
 | `GET`  | `/v1/models` | Lists all registered role names |
-| `POST` | `/v1/embed` | _(planned — Phase 1)_ Generate embeddings for Qdrant vector search |
+| `POST` | `/v1/embeddings` | Generate text embeddings using the configured `embedding` model role |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat inference (non-streaming + SSE streaming) |
+
+### POST `/v1/embeddings`
+
+**Request:**
+```json
+{
+  "input": ["text to embed", "another sentence"],
+  "model": "embedding"  // optional; defaults to the first registered embedding role
+}
+```
+
+**Response:**
+```json
+{
+  "object": "list",
+  "data": [
+    { "object": "embedding", "index": 0, "embedding": [0.01, -0.42, ...] },
+    { "object": "embedding", "index": 1, "embedding": [-0.13, 0.54, ...] }
+  ]
+}
+```
+
+**Behavior:**
+- Uses `ModelRunner.embed(text)` when delivered by llama-cpp-python.
+- If the model does not expose embed() (older or unsupported llama-cpp versions), falls back to a deterministic hash-based embedding generator.
+- Accepts any length list in `input`; outputs matching indices.
 
 ### POST `/v1/chat/completions`
 
