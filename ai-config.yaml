@@ -1,5 +1,10 @@
 version: 1
 
+# CLI system prompt configuration. If absent, defaults are used.
+system_prompt: "You are a friendly AI assistant named lala. Explain things clearly and naturally. Respond in full sentences."
+reasoning_system_prompt: "You are an internal reasoning engine. Analyse the user's query carefully. Think step by step: what is the user asking, what context matters, and what would make the best answer. Output your analysis concisely — this will be used to guide the final response, not shown to the user."
+decision_system_prompt: "You are lala, a friendly and concise AI assistant. You have been given an internal analysis to guide you. Use it to inform your answer but do NOT repeat or quote it. Respond directly to the user in clear, natural language."
+
 Modeltypes:
   types: ["Reasoning", "Decision", "Text Generation"]
 
@@ -16,7 +21,7 @@ Models:
       - name: "max_tokens"
         description: "The maximum number of tokens to generate."
         type: "integer"
-        default: 512
+        default: 2048
       - name: "n_gpu_layers"
         description: "Number of model layers to offload to GPU. Set to 99 to offload all layers (requires CUDA/Metal build). Set to 0 for CPU-only."
         type: "integer"
@@ -32,7 +37,7 @@ Models:
       - name: "n_ctx"
         description: "Context window size in tokens. Use 2048+ for long reasoning chains."
         type: "integer"
-        default: 2048
+        default: 4096
       - name: "n_batch"
         description: "Batch size for prompt evaluation. Larger = faster prompt processing."
         type: "integer"
@@ -59,7 +64,7 @@ Models:
       - name: "max_tokens"
         description: "The maximum number of tokens to generate. Decisions are short."
         type: "integer"
-        default: 128
+        default: 2048
       - name: "n_gpu_layers"
         description: "Number of model layers to offload to GPU. 0 = CPU-only."
         type: "integer"

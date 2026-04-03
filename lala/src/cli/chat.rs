@@ -1,18 +1,9 @@
 use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
 use crate::agent::planner::{Agent, needs_reasoning, limit_chunks_by_tokens, limit_memory_by_tokens};
+use crate::config::LalaConfig;
 use rag::RagStore;
 
 use super::display;
-
-const SYSTEM_PROMPT: &str =
-    "You are a friendly AI assistant named lala. \
-     Explain things clearly and naturally. \
-     Respond in full sentences.";
-
-/// Token budget for RAG context injection (out of ~2048 context window).
-/// Leave room for: system prompt (~50), conversation (~400-500), generation budget (~256).
-const CONTEXT_TOKEN_BUDGET: usize = 800;
-
 
 /// Owns conversation history and drives the chat pipeline.
 pub struct Chat<'a> {
@@ -22,14 +13,30 @@ pub struct Chat<'a> {
 }
 
 impl<'a> Chat<'a> {
-    pub fn new(client: &'a ApiClient, smart_router: bool, store: &'a RagStore) -> Self {
+    fn context_token_budget() -> usize {
+        std::env::var("LALA_CONTEXT_TOKEN_BUDGET")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or_else(|| Agent::context_token_budget())
+    }
+
+    fn chunk_token_budget(context_budget: usize) -> usize {
+        // Keep roughly 2/3 for chunk text and 1/3 for structured memory.
+        (context_budget * 2) / 3
+    }
+
+    fn memory_token_budget(context_budget: usize) -> usize {
+        context_budget - Self::chunk_token_budget(context_budget)
+    }
+
+    pub fn new(client: &'a ApiClient, smart_router: bool, store: &'a RagStore, config: LalaConfig) -> Self {
         let history = vec![ChatMessage {
             role: "system".to_string(),
-            content: SYSTEM_PROMPT.to_string(),
+            content: config.system_prompt.clone(),
         }];
 
         Self {
-            agent: Agent::new(client, store),
+            agent: Agent::new(client, store, config),
             smart_router,
             history,
         }
@@ -215,9 +222,9 @@ impl<'a> Chat<'a> {
             }
         };
 
-        // Limit both by token budget to fit context window.
-        let limited_chunks = limit_chunks_by_tokens(chunks.clone(), CONTEXT_TOKEN_BUDGET / 2);
-        let limited_memory = limit_memory_by_tokens(memory_blocks.clone(), CONTEXT_TOKEN_BUDGET / 2);
+        let context_budget = Self::context_token_budget();
+        let limited_chunks = limit_chunks_by_tokens(chunks.clone(), Self::chunk_token_budget(context_budget));
+        let limited_memory = limit_memory_by_tokens(memory_blocks.clone(), Self::memory_token_budget(context_budget));
 
         // Build context string for LLM injection using token-limited results.
         let context_str = if limited_chunks.is_empty() && limited_memory.is_empty() {

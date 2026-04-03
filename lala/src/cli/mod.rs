@@ -15,9 +15,9 @@ use rag::RagStore;
 use chat::Chat;
 use commands::CommandResult;
 
-pub fn run(api_url: &str, smart_router: bool, store: RagStore) -> anyhow::Result<()> {
+pub fn run(api_url: &str, smart_router: bool, store: RagStore, config: crate::config::LalaConfig) -> anyhow::Result<()> {
     let client = ApiClient::new(api_url);
-    let mut chat = Chat::new(&client, smart_router, &store);
+    let mut chat = Chat::new(&client, smart_router, &store, config);
     let mut rl = DefaultEditor::new()?;
 
     print_banner(api_url, smart_router);
