@@ -150,7 +150,7 @@ enum IngestResult {
     Err(String),
 }
 
-fn ingest_single_file(store: &RagStore, client: &ApiClient, path: &str) -> IngestResult {
+fn ingest_single_file(store: &RagStore, _client: &ApiClient, path: &str) -> IngestResult {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => return IngestResult::Err(format!("cannot read file: {e}")),
@@ -178,3 +178,42 @@ fn ingest_single_file(store: &RagStore, client: &ApiClient, path: &str) -> Inges
     }
 }
 
+
+/// `/ingest-news <rss_url>` — fetch RSS feed and ingest all articles into RAG.
+pub fn ingest_news(store: &RagStore, url: &str) {
+    if url.is_empty() {
+        println!("Usage: /ingest-news <rss_url>\n");
+        println!("Example: /ingest-news https://feeds.bbci.co.uk/news/rss.xml");
+        println!();
+        return;
+    }
+
+    display::info(&format!("Ingesting news from: {}", url));
+    println!();
+
+    match rag::ingest_news_feed(store, url, 1000) {
+        Ok((ingested, skipped, failed)) => {
+            println!();
+            let sep = "─".repeat(display::SECTION_WIDTH);
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!(
+                "  Ingested: {}{}{}  Skipped: {}{}{}  Failed: {}{}{}",
+                display::BOLD_GREEN,
+                ingested,
+                display::RESET,
+                display::YELLOW,
+                skipped,
+                display::RESET,
+                if failed > 0 { display::BOLD_RED } else { display::DIM },
+                failed,
+                display::RESET,
+            );
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!();
+        }
+        Err(e) => {
+            display::error(&format!("News ingestion failed: {e}"));
+            println!();
+        }
+    }
+}

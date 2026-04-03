@@ -29,6 +29,10 @@ pub fn dispatch(input: &str, store: &RagStore, client: &ApiClient) -> CommandRes
             ingest::ingest_file(store, client, args);
             CommandResult::Handled
         }
+        "/ingest-news" => {
+            ingest::ingest_news(store, args);
+            CommandResult::Handled
+        }
         "/search" => {
             search(store, args);
             CommandResult::Handled
@@ -80,6 +84,11 @@ fn print_help() {
     );
     println!(
         "  {}/ingest-file <p>{}  Ingest a single file by path",
+        display::BOLD_GREEN,
+        display::RESET,
+    );
+    println!(
+        "  {}/ingest-news <url>{} Ingest articles from RSS feed",
         display::BOLD_GREEN,
         display::RESET,
     );

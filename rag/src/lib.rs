@@ -1,12 +1,15 @@
 mod chunker;
+pub mod news;
 
 pub use chunker::chunk;
+pub use news::ingest_news_feed;
 
 use anyhow::{Result, bail};
 use rusqlite::Connection;
 use uuid::Uuid;
 
 /// A retrieved chunk with its BM25 relevance score.
+#[derive(Clone)]
 pub struct Chunk {
     pub id: String,
     pub document_id: String,
@@ -21,6 +24,7 @@ pub struct Chunk {
 }
 
 /// A structured memory block extracted from a chunk of text.
+#[derive(Clone)]
 pub struct MemoryBlock {
     pub id: String,
     pub document_id: String,

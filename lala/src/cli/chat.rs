@@ -1,5 +1,5 @@
 use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
-use crate::agent::planner::{Agent, needs_reasoning};
+use crate::agent::planner::{Agent, needs_reasoning, limit_chunks_by_tokens, limit_memory_by_tokens};
 use rag::RagStore;
 
 use super::display;
@@ -8,6 +8,11 @@ const SYSTEM_PROMPT: &str =
     "You are a friendly AI assistant named lala. \
      Explain things clearly and naturally. \
      Respond in full sentences.";
+
+/// Token budget for RAG context injection (out of ~2048 context window).
+/// Leave room for: system prompt (~50), conversation (~400-500), generation budget (~256).
+const CONTEXT_TOKEN_BUDGET: usize = 800;
+
 
 /// Owns conversation history and drives the chat pipeline.
 pub struct Chat<'a> {
@@ -65,8 +70,36 @@ impl<'a> Chat<'a> {
     }
 
     fn run_direct(&mut self) {
+        // Retrieve context (same as reasoning path).
+        let input = match self.history.iter().rfind(|m| m.role == "user") {
+            Some(m) => m.content.clone(),
+            None => {
+                display::error("No user message found.");
+                return;
+            }
+        };
+
+        let (context_str, limited_chunks, limited_memory) = self.retrieve_and_limit_context(&input);
+
+        // Display retrieved sources if any.
+        if !limited_chunks.is_empty() {
+            display::print_sources(&limited_chunks);
+        }
+        if !limited_memory.is_empty() {
+            let sep = "─".repeat(display::SECTION_WIDTH);
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!("  {}Structured Memory Blocks:{}", display::BOLD_GREEN, display::RESET);
+            for block in &limited_memory {
+                println!("    {}- source:{} {} chunk #{}", display::CYAN, display::RESET, block.source, block.chunk_index);
+                println!("      {}FACTS:{} {}", display::CYAN, display::RESET, block.facts);
+                println!("      {}CAPABILITIES:{} {}", display::CYAN, display::RESET, block.capabilities);
+                println!("      {}CONSTRAINTS:{} {}", display::CYAN, display::RESET, block.constraints);
+            }
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+        }
+
         let result = display::with_spinner("thinking", || {
-            self.agent.run_direct(&self.history)
+            self.agent.run_direct(&self.history, context_str.as_deref())
         });
 
         match result {
@@ -94,36 +127,17 @@ impl<'a> Chat<'a> {
             }
         };
 
-        let chunks = match display::with_spinner("retrieving", || {
-            self.agent.retrieve_context(&input)
-        }) {
-            Ok(c) => c,
-            Err(e) => {
-                display::warn(&format!("Retrieval error: {e} — proceeding without context."));
-                Vec::new()
-            }
-        };
-
-        // Also retrieve structured memory blocks.
-        let memory_blocks = match display::with_spinner("retrieving memory", || {
-            self.agent.retrieve_memory_context(&input)
-        }) {
-            Ok(m) => m,
-            Err(e) => {
-                display::warn(&format!("Memory retrieval error: {e} — proceeding without context."));
-                Vec::new()
-            }
-        };
+        let (context_str, limited_chunks, limited_memory) = self.retrieve_and_limit_context(&input);
 
         // Display retrieved sources and memory if any were found.
-        if !chunks.is_empty() {
-            display::print_sources(&chunks);
+        if !limited_chunks.is_empty() {
+            display::print_sources(&limited_chunks);
         }
-        if !memory_blocks.is_empty() {
+        if !limited_memory.is_empty() {
             let sep = "─".repeat(display::SECTION_WIDTH);
             println!("{}{}{}", display::DIM, sep, display::RESET);
             println!("  {}Structured Memory Blocks:{}", display::BOLD_GREEN, display::RESET);
-            for block in &memory_blocks {
+            for block in &limited_memory {
                 println!("    {}- source:{} {} chunk #{}", display::CYAN, display::RESET, block.source, block.chunk_index);
                 println!("      {}FACTS:{} {}", display::CYAN, display::RESET, block.facts);
                 println!("      {}CAPABILITIES:{} {}", display::CYAN, display::RESET, block.capabilities);
@@ -132,36 +146,6 @@ impl<'a> Chat<'a> {
             println!("{}{}{}", display::DIM, sep, display::RESET);
         }
 
-        // Build context string for LLM injection.
-        let context_str = if chunks.is_empty() && memory_blocks.is_empty() {
-            None
-        } else {
-            let mut ctx = String::new();
-            if !chunks.is_empty() {
-                ctx.push_str("--- Retrieved Chunks ---\n");
-                ctx.push_str(
-                    &chunks
-                        .iter()
-                        .map(|c| c.chunk_text.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n---\n"),
-                );
-                ctx.push_str("\n");
-            }
-            if !memory_blocks.is_empty() {
-                ctx.push_str("--- Retrieved Structured Memory Blocks ---\n");
-                for block in &memory_blocks {
-                    ctx.push_str(&format!(
-                        "FACTS: {}\nCAPABILITIES: {}\nCONSTRAINTS: {}\nTEXT: {}\n---\n",
-                        block.facts,
-                        block.capabilities,
-                        block.constraints,
-                        block.chunk_text
-                    ));
-                }
-            }
-            Some(ctx)
-        };
         let ctx_ref = context_str.as_deref();
 
         let reasoning_result = display::with_spinner("reasoning", || {
@@ -205,5 +189,67 @@ impl<'a> Chat<'a> {
                 }
             }
         }
+    }
+
+    /// Retrieve and limit RAG context by token budget.
+    /// Returns: (context_string, limited_chunks, limited_memory_blocks)
+    fn retrieve_and_limit_context(&self, query: &str) -> (Option<String>, Vec<rag::Chunk>, Vec<rag::MemoryBlock>) {
+        let chunks = match display::with_spinner("retrieving", || {
+            self.agent.retrieve_context(query)
+        }) {
+            Ok(c) => c,
+            Err(e) => {
+                display::warn(&format!("Retrieval error: {e} — proceeding without context."));
+                Vec::new()
+            }
+        };
+
+        // Also retrieve structured memory blocks.
+        let memory_blocks = match display::with_spinner("retrieving memory", || {
+            self.agent.retrieve_memory_context(query)
+        }) {
+            Ok(m) => m,
+            Err(e) => {
+                display::warn(&format!("Memory retrieval error: {e} — proceeding without context."));
+                Vec::new()
+            }
+        };
+
+        // Limit both by token budget to fit context window.
+        let limited_chunks = limit_chunks_by_tokens(chunks.clone(), CONTEXT_TOKEN_BUDGET / 2);
+        let limited_memory = limit_memory_by_tokens(memory_blocks.clone(), CONTEXT_TOKEN_BUDGET / 2);
+
+        // Build context string for LLM injection using token-limited results.
+        let context_str = if limited_chunks.is_empty() && limited_memory.is_empty() {
+            None
+        } else {
+            let mut ctx = String::new();
+            if !limited_chunks.is_empty() {
+                ctx.push_str("--- Retrieved Chunks ---\n");
+                ctx.push_str(
+                    &limited_chunks
+                        .iter()
+                        .map(|c| c.chunk_text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n---\n"),
+                );
+                ctx.push_str("\n");
+            }
+            if !limited_memory.is_empty() {
+                ctx.push_str("--- Retrieved Structured Memory Blocks ---\n");
+                for block in &limited_memory {
+                    ctx.push_str(&format!(
+                        "FACTS: {}\nCAPABILITIES: {}\nCONSTRAINTS: {}\nTEXT: {}\n---\n",
+                        block.facts,
+                        block.capabilities,
+                        block.constraints,
+                        block.chunk_text
+                    ));
+                }
+            }
+            Some(ctx)
+        };
+
+        (context_str, limited_chunks, limited_memory)
     }
 }

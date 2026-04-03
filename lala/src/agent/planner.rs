@@ -1,6 +1,50 @@
 use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
 use rag::RagStore;
 
+// ── Token estimation ──────────────────────────────────────────────────────────
+
+/// Estimate tokens using ~3 bytes per token (same as LLML server).
+fn estimate_tokens(text: &str) -> usize {
+    (text.len() as f32 / 3.0).ceil() as usize
+}
+
+/// Limit retrieved chunks to fit within a token budget.
+/// Returns the chunks that fit, ordered by relevance (highest first).
+pub fn limit_chunks_by_tokens(chunks: Vec<rag::Chunk>, max_tokens: usize) -> Vec<rag::Chunk> {
+    let mut result = Vec::new();
+    let mut used_tokens = 0;
+
+    for chunk in chunks {
+        let chunk_tokens = estimate_tokens(&chunk.chunk_text);
+        if used_tokens + chunk_tokens > max_tokens {
+            break;
+        }
+        used_tokens += chunk_tokens;
+        result.push(chunk);
+    }
+
+    result
+}
+
+/// Limit retrieved memory blocks to fit within a token budget.
+pub fn limit_memory_by_tokens(blocks: Vec<rag::MemoryBlock>, max_tokens: usize) -> Vec<rag::MemoryBlock> {
+    let mut result = Vec::new();
+    let mut used_tokens = 0;
+
+    for block in blocks {
+        let block_tokens = estimate_tokens(&block.facts)
+            + estimate_tokens(&block.capabilities)
+            + estimate_tokens(&block.constraints);
+        if used_tokens + block_tokens > max_tokens {
+            break;
+        }
+        used_tokens += block_tokens;
+        result.push(block);
+    }
+
+    result
+}
+
 // ── Query classifier ──────────────────────────────────────────────────────────
 
 /// Greeting / social phrases that never warrant reasoning.
@@ -235,8 +279,17 @@ impl<'a> Agent<'a> {
     /// Direct path — skips reasoning and sends the full conversation history
     /// straight to the decision model under its normal system prompt.
     /// Used for simple or conversational queries classified by `classify_query()`.
-    pub fn run_direct(&self, history: &[ChatMessage]) -> anyhow::Result<String> {
-        let decision_messages = Self::replace_system(history, DECISION_SYSTEM);
+    /// When `context` is provided, it is appended to the decision system prompt.
+    pub fn run_direct(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<String> {
+        let system = match context {
+            Some(ctx) => format!(
+                "{}\n\n--- Retrieved Context ---\n{}\n--- End Context ---\n\n\
+                 Use the retrieved context above to inform your answer when relevant.",
+                DECISION_SYSTEM, ctx
+            ),
+            None => DECISION_SYSTEM.to_string(),
+        };
+        let decision_messages = Self::replace_system(history, &system);
         self.client.decide(&decision_messages, Some(256))
     }
 
