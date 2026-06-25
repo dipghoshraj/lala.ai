@@ -50,7 +50,7 @@ Models:
         description: "Whether to generate embeddings instead of text. 1 = enabled."
         type: "integer"
         default: 0
-    modelPath: "D:\\models\\deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+    modelPath: "/models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
 
   - name: "mistral-decision"
     description: "A model optimised for concise, deterministic decision-making and action selection."
@@ -93,7 +93,7 @@ Models:
         description: "Whether to generate embeddings instead of text. 1 = enabled."
         type: "integer"
         default: 0
-    modelPath: "D:\\models\\qwen2.5-3b-instruct-q4_k_m.gguf"
+    modelPath: "/models/qwen2.5-3b-instruct-q4_k_m.gguf"
 
   - name: "embedding"
     description: "A model for generating vector embeddings from text, used for semantic search and retrieval."
@@ -136,4 +136,4 @@ Models:
         description: "Whether to generate embeddings instead of text. 1 = enabled."
         type: "integer"
         default: 1
-    modelPath: "D:\\models\\bge-small-en-v1.5-q4_k_m.gguf"
+    modelPath: "/models/bge-small-en-v1.5-q4_k_m.gguf"

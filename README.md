@@ -50,7 +50,7 @@ docker run -p 3000:3000 \
   lala-llml
 ```
 
-Before running, set `modelPath` values in `ai-config.yaml` to container paths:
+The `modelPath` values in `ai-config.yaml` must be absolute container paths (prefixed with `/models/`):
 ```yaml
 modelPath: "/models/your-model.Q4_K_M.gguf"
 ```
