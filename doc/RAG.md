@@ -175,6 +175,21 @@ pub fn ingest(&self, title: &str, source: &str, text: &str) -> Result<usize>  //
 Chunks `text` (512 chars, 64-char overlap) and inserts into `documents`, `chunks`, and
 `memory_blocks` in a single transaction. Returns chunk count. Errors if `source` already exists.
 
+Current ingestion flow:
+
+1. The CLI reads the file/news article text and calls `RagStore::ingest()` (an alias for `store()`).
+2. `store()` checks `documents.source` first so the same file/URL is not ingested twice.
+3. A typed `Document` model is created, then text is split into typed `DocumentChunk` rows. Each row
+   receives a stable `document_id`, `chunk_index`, generated `chunk_id`, chunk text, and character count.
+4. A typed `MemoryBlockRecord` is created for every chunk. Today the memory fields use the placeholder
+   `build_memory_block()` output; future LLM extraction can replace that model builder without changing
+   the database write path.
+5. The document row, chunk rows, and memory rows are written through prepared statements inside one
+   transaction. If any insert fails, PostgreSQL rolls the whole ingestion back, so there is no partial
+   document/chunk state.
+6. The `chunks.fts_vector` generated column is populated by PostgreSQL from `chunk_text`, so newly
+   inserted chunks are immediately searchable by keyword retrieval.
+
 #### `store_embedding`
 
 ```rust
@@ -202,6 +217,22 @@ pub fn retrieve(&self, query: &str, k: usize) -> Result<Vec<Chunk>>
 
 `websearch_to_tsquery('english', query)` matched against `fts_vector`, ranked by `ts_rank_cd`
 (higher = more relevant). Returns up to `k` results.
+
+Current query retrieval flow when a user enters a prompt in the CLI:
+
+1. `Agent::retrieve_context()` normalizes punctuation/whitespace and passes natural-language text to
+   `RagStore::retrieve()`; it no longer builds an `OR`-joined query string in the CLI.
+2. The store rejects empty queries or `k == 0` early and otherwise binds the normalized query and limit
+   as parameters. User text is never interpolated into SQL.
+3. The centralized search query builds one `websearch_to_tsquery('english', $1)` in a CTE and reuses it
+   for both filtering (`fts_vector @@ tsq`) and ranking (`ts_rank_cd(fts_vector, tsq)`). This keeps
+   matching and scoring consistent.
+4. Matching chunk rows are joined to `documents` so each `Chunk` result includes `title` and `source`,
+   then mapped through the typed row mapper before being returned to the CLI.
+5. `Agent::retrieve_memory_context()` follows the same query path but joins the matching chunks to
+   `memory_blocks`, returning aligned structured memory for the same source chunks.
+6. The CLI applies token-budget limiting before injecting retrieved chunk text and memory context into
+   the model prompt.
 
 #### `retrieve_by_embedding` — vector search
 
