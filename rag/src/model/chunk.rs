@@ -10,13 +10,25 @@ pub struct DocumentChunk {
 }
 
 impl DocumentChunk {
-    pub fn new(document_id: &str, index: usize, text: String) -> Self {
+    pub fn new(document_id: &str, index: i32, text: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             document_id: document_id.to_string(),
-            index: index as i32,
+            index,
             char_count: text.chars().count() as i32,
             text,
         }
     }
+
+    pub fn insert(&self) -> anyhow::Result<()> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        client.execute(
+            crate::model::sql::INSERT_CHUNK,
+            &[ &self.id, &self.document_id, &self.index, &self.text, &self.char_count],
+        )?;
+        Ok(())
+    }
+
+
 }

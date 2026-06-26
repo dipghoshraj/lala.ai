@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::chunker::chunk;
 use crate::migrate::run_migrations;
 use crate::types::{build_memory_block, Chunk, EmbeddingSearchResult, MemoryBlock};
+use crate::model::{memory, document, chunk};
 
 /// Default directory where migration SQL files are discovered.
 const DEFAULT_MIGRATIONS_DIR: &str = "./migrations";
@@ -46,66 +47,28 @@ impl RagStore {
     ///
     /// Skips (returns an error) if a document with the same `source` already exists.
     pub fn store(&self, title: &str, source: &str, text: &str) -> Result<usize> {
-        let mut client = self.client.lock().unwrap();
-
-        let exists: bool = client
-            .query_one(
-                "SELECT EXISTS(SELECT 1 FROM documents WHERE source = $1)",
-                &[&source],
-            )?
-            .get(0);
-
+        let exists: bool = document::Document::exist(source)?;
         if exists {
             bail!("Already ingested: {source}");
         }
-
-        let doc_id = Uuid::new_v4().to_string();
-        let created_at = crate::types::chrono_now();
 
         let chunks = chunk(text, 512, 64);
         if chunks.is_empty() {
             return Ok(0);
         }
 
-        let mut tx = client.transaction()?;
-
-        tx.execute(
-            "INSERT INTO documents (id, title, source, created_at) VALUES ($1, $2, $3, $4)",
-            &[&doc_id, &title, &source, &created_at],
-        )?;
+        let doc = document::Document::new(title, source);
+        doc.insert()?;
 
         for (i, chunk_text) in chunks.iter().enumerate() {
-            let chunk_id = Uuid::new_v4().to_string();
-            let char_count = chunk_text.len() as i32;
             let chunk_idx = i as i32;
 
-            tx.execute(
-                "INSERT INTO chunks (chunk_id, document_id, chunk_index, chunk_text, char_count)
-                 VALUES ($1, $2, $3, $4, $5)",
-                &[&chunk_id, &doc_id, &chunk_idx, chunk_text, &char_count],
-            )?;
+            let chunk = chunk::DocumentChunk::new(&doc.id, chunk_idx, chunk_text.clone());
+            chunk.insert()?;
 
-            let (facts, capabilities, constraints) = build_memory_block(chunk_text);
-            let memory_id = Uuid::new_v4().to_string();
-            tx.execute(
-                "INSERT INTO memory_blocks
-                     (id, document_id, chunk_index, chunk_text, facts, capabilities, constraints, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                &[
-                    &memory_id,
-                    &doc_id,
-                    &chunk_idx,
-                    chunk_text,
-                    &facts,
-                    &capabilities,
-                    &constraints,
-                    &created_at,
-                ],
-            )?;
+            let memory_block = memory::MemoryBlockRecord::from_chunk(&chunk);
+            memory_block.insert(&self)?;
         }
-
-        tx.commit()?;
-
         Ok(chunks.len())
     }
 

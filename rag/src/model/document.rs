@@ -19,4 +19,26 @@ impl Document {
             created_at: chrono_now(),
         }
     }
+
+    pub fn exist(source: &str) -> anyhow::Result<bool> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        let row = client.query_one(
+            crate::model::sql::DOCUMENT_EXISTS,
+            &[&source],
+        )?;
+        Ok(row.get::<_, i64>(0) > 0)
+    }
+
+    pub fn insert(&self) -> anyhow::Result<()> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        client.execute(
+            crate::model::sql::INSERT_DOCUMENT,
+            &[&self.id, &self.title, &self.source, &self.created_at],
+        )?;
+        Ok(())
+    }
+
+    
 }
