@@ -7,9 +7,9 @@ Rust-based local **Agentic RAG** system. Three components communicate over HTTP:
 - **`lala`** — interactive CLI client (Rust: terminal REPL, conversation history, spinner)
 - **`LLML`** — local LLM inference server (Python/FastAPI: loads GGUF models, serves OpenAI-compatible API)
 - **`telegram`** — Telegram bot client (Python: classify → route → spoiler-formatted reply)
-- **`rag`** — standalone RAG library crate (Rust: SQLite FTS5, BM25 keyword retrieval)
+- **`rag`** — standalone RAG library crate (Rust: PostgreSQL FTS + pgvector, keyword + vector retrieval)
 
-The project uses a **Cargo workspace** (`lala.ai/Cargo.toml`) with members `lala` and `rag`. SQLite + FTS5 is the Phase 0 RAG storage engine (keyword BM25 retrieval). PostgreSQL + pgvector is provisioned for future vector search phases.
+The project uses a **Cargo workspace** (`lala.ai/Cargo.toml`) with members `lala` and `rag`. PostgreSQL + pgvector is the RAG storage engine: `chunks` table with `tsvector` GIN index for keyword retrieval, `chunk_embeddings` table with `vector(384)` IVFFlat index for semantic search.
 
 ---
 
@@ -37,11 +37,13 @@ LLML/api/classifier.py    Heuristic + LLM-based query classifier
  ▼
 *.gguf model file (local filesystem, path from ai-config.yaml)
 
-rag/src/lib.rs            RagStore — SQLite FTS5 store() + retrieve(), Chunk struct
+rag/src/lib.rs            RagStore — PostgreSQL FTS store()/retrieve() + pgvector store_embedding()/retrieve_by_embedding()
 rag/src/chunker.rs        chunk(text, size, overlap) → Vec<String>
- │ rusqlite (C FFI)
+rag/src/migrate.rs        run_migrations(client, dir) — applies migrations/*.sql in order
+migrations/               SQL migration files (001_initial_schema.sql, 002_pgvector.sql)
+ │ postgres (TCP)
  ▼
-lala.db (SQLite file, local filesystem)
+PostgreSQL + pgvector (docker-compose db service, :5432)
 ```
 ```
 
@@ -63,10 +65,12 @@ LLML_API_URL=http://192.168.1.10:3000 cargo run
 # Enable LLM-based smart query router
 LALA_SMART_ROUTER=1 cargo run
 
-# Database (PostgreSQL 18 + pgvector) — for future vector search phases
-docker build -f psql.Dockerfile -t lala-postgres .
-docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 lala-postgres
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/lala
+# Start PostgreSQL + pgvector (docker-compose)
+docker compose up -d db
+# Connect lala to PostgreSQL (default matches docker-compose)
+DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/vector_db cargo run
+# Override migrations directory (default: ./migrations)
+LALA_MIGRATIONS_DIR=./migrations cargo run
 ```
 
 ---
@@ -77,7 +81,7 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/lala
 
 | File | Role |
 |------|------|
-| `src/main.rs` | Entry — resolves API URL (arg → `LLML_API_URL` env → `http://localhost:3000`) + `LALA_SMART_ROUTER` flag, calls `cli::run()` |
+| `src/main.rs` | Entry — resolves API URL (arg → `LLML_API_URL` env → `http://localhost:3000`) + `LALA_SMART_ROUTER` flag + `DATABASE_URL`, calls `RagStore::open()` then `cli::run()` |
 | `src/cli.rs` | REPL: `rustyline` input, `Vec<ChatMessage>` history (system prompt at index 0), braille spinner on background thread, `/clear` and `/exit` commands |
 | `src/agent/model.rs` | `ApiClient` wrapping `reqwest::blocking::Client`; `ChatMessage`, `ModelRole` enum (`Reasoning`/`Decision`), `RouteDecision` enum; methods: `chat()`, `reason()`, `decide()`, `classify()` |
 | `src/agent/planner.rs` | `Agent` — `classify_query()`, `run_direct()`, `run_reasoning()`, `run_decision()`, local `needs_reasoning()` heuristic |
@@ -160,8 +164,8 @@ Generation stops early if `[/INST]` appears in output tokens (prevents prompt le
 - **Error handling**: propagate with `anyhow::Result` in Rust; no `.unwrap()` in new code.
 - **Thread safety (LLML)**: `ModelRunner` wraps `llama-cpp-python`'s `Llama` object. Each HTTP request runs inference via `asyncio.to_thread()` so the async event loop is never blocked.
 - **Blocking inference**: always run model inference inside `asyncio.to_thread()` in LLML — never block the FastAPI event loop directly.
-- **Embeddings** (planned, Phase 1+): `Vec<f32>`, pgvector columns, model `"bge-small"`, cosine distance `<=>` operator.
-- **RAG storage (Phase 0)**: SQLite + FTS5 via `rusqlite` with `bundled` feature in the standalone `rag` crate. Keyword BM25 retrieval only — no neural embeddings.
+- **Embeddings**: `Vec<f32>` (384-dim, `all-MiniLM-L6-v2`), stored in `chunk_embeddings.embedding vector(384)`, cosine distance `<=>` via pgvector. `RagStore::store_embedding()` / `retrieve_by_embedding()` are the write/read APIs.
+- **RAG storage**: PostgreSQL + pgvector. Keyword search uses `tsvector` GIN index + `websearch_to_tsquery` / `ts_rank_cd`. Vector search uses `ivfflat` cosine index. Schema applied by `run_migrations()` from `migrations/*.sql` on `RagStore::open()`.
 - **Config is LLML's concern**: `lala` never reads `ai-config.yaml`; it selects models by role string via the API.
 - **Role strings**: `"reasoning"` and `"decision"` — must match keys registered in `ModelRegistry`; defined under `role:` in `ai-config.yaml`.
 - **RAG crate independence**: `rag/` is a standalone library crate with zero dependencies on `lala`, agent, CLI, or model layers. Consumers depend on it via `rag = { path = "../rag" }` and call the `RagStore` public API.
@@ -178,27 +182,33 @@ Generation stops early if `[/INST]` appears in output tokens (prevents prompt le
 | 2 | Planned | Reranking, hybrid search, grounding/citation validation |
 | 3 | Planned | HTTP/gRPC interface, metadata filtering |
 
-Target module layout (Phase 0) — see [doc/phase0.md](../doc/phase0.md):
+Current module layout:
 ```
 rag/                        # Standalone RAG library crate
-  Cargo.toml                # deps: rusqlite (bundled), uuid (v4), anyhow
+  Cargo.toml                # deps: postgres, pgvector, uuid (v4), anyhow, reqwest, rss, regex
   src/
-    lib.rs                  # RagStore, Chunk, store(), retrieve()
+    lib.rs                  # RagStore, Chunk, EmbeddingSearchResult, MemoryBlock — public API
+    store.rs                # PostgreSQL impl: store/retrieve (FTS) + store_embedding/retrieve_by_embedding (pgvector)
+    migrate.rs              # run_migrations(client, dir) — idempotent SQL file runner
     chunker.rs              # chunk(text, size, overlap) → Vec<String>
+    news.rs                 # RSS ingestion
+migrations/                 # SQL files applied in lex order on startup
+  001_initial_schema.sql    # documents, chunks (tsvector GIN), memory_blocks, schema_migrations
+  002_pgvector.sql          # CREATE EXTENSION vector, chunk_embeddings (vector(384) IVFFlat)
 
 lala/src/                   # CLI + Agent binary crate
-  main.rs                   # Startup: resolve API URL, init RagStore, start CLI
-  cli.rs                    # Readline loop, /ingest-file, /search commands
-  agent/                    # Planner, Reasoner (existing)
+  main.rs                   # Startup: resolve API URL + DATABASE_URL, init RagStore, start CLI
+  cli/                      # Readline loop, /ingest-file, /search, /memory-search commands
+  agent/                    # Planner, Reasoner
 ```
 
 ---
 
 ## Infrastructure
 
-- **PostgreSQL 18 + pgvector**: `psql.Dockerfile` — build and run with `docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 lala-postgres`
-- **`init.sql`**: place at repo root; auto-executed by Docker on first start (file not yet created)
-- **Planned DB tables**: `sessions`, `messages`, `documents`, `document_chunks`, `queries`, `retrieval_results`, `answers`, `answer_citations` — see [doc/future/design.md](../doc/future/design.md)
+- **PostgreSQL + pgvector**: managed via `docker-compose.yml` (`db` service, `pgvector/pgvector:pg17`, port 5432). Start with `docker compose up -d db`.
+- **Migrations**: `migrations/001_initial_schema.sql` + `migrations/002_pgvector.sql`. Applied automatically by `run_migrations()` on every `RagStore::open()`. Tracked in `schema_migrations` table.
+- **ChromaDB**: `chroma` service in `docker-compose.yml`. Python vector store for LLML endpoints (`/v1/vector/*`). Embedded mode (no server) by default; switch to server mode in `ai-config.yaml`.
 
 ---
 
@@ -211,12 +221,13 @@ lala/src/                   # CLI + Agent binary crate
 | `reqwest` (blocking + json) | HTTP client for LLML API |
 | `serde` / `serde_json` | ChatMessage serialization |
 | `anyhow` | Error propagation |
-| `rag` (path dep) | Standalone RAG crate — SQLite FTS5 store + retrieve |
+| `rag` (path dep) | Standalone RAG crate — PostgreSQL FTS + pgvector store, retrieve, embed |
 
 ### rag
 | Crate | Purpose |
-|-------|---------|
-| `rusqlite` (bundled) | SQLite + FTS5 for BM25 keyword retrieval |
+|-------|---------||
+| `postgres` | Blocking PostgreSQL client (sync, no async runtime required) |
+| `pgvector` (postgres feature) | `Vector` type for `vector(384)` column, cosine `<=>` operator |
 | `uuid` | Document/chunk ID generation |
 | `anyhow` | Error propagation |
 
