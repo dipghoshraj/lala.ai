@@ -40,5 +40,10 @@ impl Document {
         Ok(())
     }
 
-    
+    pub fn count() -> anyhow::Result<usize> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        let row = client.query_one("SELECT COUNT(*) FROM documents", &[])?;
+        Ok(row.get::<_, i64>(0) as usize)
+    }    
 }

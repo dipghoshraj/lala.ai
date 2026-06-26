@@ -15,6 +15,22 @@ pub struct MemoryBlockRecord {
     pub created_at: String,
 }
 
+
+/// A structured memory block extracted from a chunk of text.
+#[derive(Clone)]
+pub struct MemoryBlock {
+    pub id: String,
+    pub document_id: String,
+    pub chunk_index: usize,
+    pub chunk_text: String,
+    pub facts: String,
+    pub capabilities: String,
+    pub constraints: String,
+    pub title: String,
+    pub source: String,
+}
+
+
 impl  MemoryBlockRecord {
     
     pub fn from_chunk(chunk: &DocumentChunk) -> Self {
@@ -41,4 +57,30 @@ impl  MemoryBlockRecord {
         )?;
         Ok(())
     }
+
+    pub fn fetch_by_documents(store: &RagStore, query: &str, limit: i64) -> anyhow::Result<Vec<MemoryBlock>> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        let rows = client.query(
+            crate::model::sql::SEARCH_MEMORY_BLOCKS,
+            &[&query, &limit],
+        )?;
+        let memory_blocks = rows
+            .into_iter()
+            .map(|row| MemoryBlock {
+                id: row.get(0),
+                document_id: row.get(1),
+                chunk_index: row.get::<_, i32>(2) as usize,
+                chunk_text: row.get(3),
+                facts: row.get(4),
+                capabilities: row.get(5),
+                constraints: row.get(6),
+                title: row.get(7),
+                source: row.get(8),
+            })
+            .collect();
+        Ok(memory_blocks)
+    }
+
+    
 }

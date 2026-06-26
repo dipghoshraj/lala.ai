@@ -200,7 +200,7 @@ impl<'a> Chat<'a> {
 
     /// Retrieve and limit RAG context by token budget.
     /// Returns: (context_string, limited_chunks, limited_memory_blocks)
-    fn retrieve_and_limit_context(&self, query: &str) -> (Option<String>, Vec<rag::Chunk>, Vec<rag::MemoryBlock>) {
+    fn retrieve_and_limit_context(&self, query: &str) -> (Option<String>, Vec<rag::model::chunk::ChunkRow>, Vec<rag::model::memory::MemoryBlock>) {
         let chunks = match display::with_spinner("retrieving", || {
             self.agent.retrieve_context(query)
         }) {

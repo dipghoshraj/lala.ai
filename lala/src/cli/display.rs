@@ -89,7 +89,7 @@ pub fn progress(current: usize, total: usize, label: &str) {
 }
 
 /// Print the retrieved RAG sources with file, chunk index, score, and preview.
-pub fn print_sources(chunks: &[rag::Chunk]) {
+pub fn print_sources(chunks: &[rag::model::chunk::ChunkRow]) {
     use std::collections::BTreeSet;
 
     println!();

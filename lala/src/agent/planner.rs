@@ -23,7 +23,7 @@ const MAX_RAG_FETCH_LIMIT: usize = 200;
 
 /// Limit retrieved chunks to fit within a token budget.
 /// Returns the chunks that fit, ordered by relevance (highest first).
-pub fn limit_chunks_by_tokens(chunks: Vec<rag::Chunk>, max_tokens: usize) -> Vec<rag::Chunk> {
+pub fn limit_chunks_by_tokens(chunks: Vec<rag::model::chunk::ChunkRow>, max_tokens: usize) -> Vec<rag::model::chunk::ChunkRow> {
     let mut result = Vec::new();
     let mut used_tokens = 0;
 
@@ -40,7 +40,7 @@ pub fn limit_chunks_by_tokens(chunks: Vec<rag::Chunk>, max_tokens: usize) -> Vec
 }
 
 /// Limit retrieved memory blocks to fit within a token budget.
-pub fn limit_memory_by_tokens(blocks: Vec<rag::MemoryBlock>, max_tokens: usize) -> Vec<rag::MemoryBlock> {
+pub fn limit_memory_by_tokens(blocks: Vec<rag::model::memory::MemoryBlock>, max_tokens: usize) -> Vec<rag::model::memory::MemoryBlock> {
     let mut result = Vec::new();
     let mut used_tokens = 0;
 
@@ -162,7 +162,7 @@ impl<'a> Agent<'a> {
 
     /// Retrieve relevant chunks from the RAG store for the given query.
     /// Returns the matched chunks, or an empty vec if nothing matched.
-    pub fn retrieve_context(&self, query: &str) -> anyhow::Result<Vec<rag::Chunk>> {
+    pub fn retrieve_context(&self, query: &str) -> anyhow::Result<Vec<rag::model::chunk::ChunkRow>> {
         // Strip characters that are special in FTS5 query syntax.
         let sanitized: String = query
             .chars()
@@ -180,7 +180,7 @@ impl<'a> Agent<'a> {
     }
 
     /// Retrieve structured memory blocks for the given query.
-    pub fn retrieve_memory_context(&self, query: &str) -> anyhow::Result<Vec<rag::MemoryBlock>> {
+    pub fn retrieve_memory_context(&self, query: &str) -> anyhow::Result<Vec<rag::model::memory::MemoryBlock>> {
         let sanitized: String = query
             .chars()
             .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
