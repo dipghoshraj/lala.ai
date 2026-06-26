@@ -25,6 +25,12 @@ impl RagDB {
     pub fn client(&self) -> MutexGuard<'_, Client> {
         self.client.lock().unwrap()
     }
+
+    pub fn execute(&self, query: &str, params: &[&(dyn postgres::types::ToSql + Sync)]) -> anyhow::Result<u64> {
+        let mut client = self.client();
+        let rows_affected = client.execute(query, params)?;
+        Ok(rows_affected)
+    }
 }
 
 pub fn init_db(url: &str) -> anyhow::Result<()> {

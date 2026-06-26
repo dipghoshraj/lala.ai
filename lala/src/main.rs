@@ -45,14 +45,14 @@ fn main() -> anyhow::Result<()> {
 
 
     // let store = RagStore::open(&database_url)?;
-    let _: () =rag::model::init_db(&database_url)?;
+    let _: () = rag::model::init_db(&database_url)?;
 
-    let mut client = rag::model::db().client();
-    let migrations_dir = std::env::var("LALA_MIGRATIONS_DIR")
+    {
+        let mut client = rag::model::db().client();
+        let migrations_dir = std::env::var("LALA_MIGRATIONS_DIR")
             .unwrap_or_else(|_| DEFAULT_MIGRATIONS_DIR.to_string());
-    rag::migrate::run_migrations(&mut client, &migrations_dir)?;
-
-    
+        rag::migrate::run_migrations(&mut client, &migrations_dir)?;
+    }
 
     let store = rag::RagStore{};
 

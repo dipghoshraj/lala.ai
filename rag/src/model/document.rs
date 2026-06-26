@@ -27,8 +27,9 @@ impl Document {
             crate::model::sql::DOCUMENT_EXISTS,
             &[&source],
         )?;
-        print!("Document exist check for source: {source}, exists: {}\n", row.get::<_, i64>(0) > 0);
-        Ok(row.get::<_, i64>(0) > 0)
+        let exists: bool = row.get(0);
+        print!("Document exist check for source: {source}, exists: {}\n", exists);
+        Ok(exists)
     }
 
     pub fn insert(&self) -> anyhow::Result<()> {

@@ -55,6 +55,7 @@ impl  MemoryBlockRecord {
             &[&self.id, &self.document_id, &self.chunk_index, &self.chunk_text, 
             &self.facts, &self.capabilities, &self.constraints, &self.created_at],
         )?;
+        
         Ok(())
     }
 
