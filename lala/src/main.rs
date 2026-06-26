@@ -37,9 +37,10 @@ fn main() -> anyhow::Result<()> {
         .map(|v| v.trim() == "1")
         .unwrap_or(false);
 
-    // DB path from env var, then default.
-    let db_path = std::env::var("LALA_DB_PATH").unwrap_or_else(|_| "./lala.db".to_string());
-    let store = RagStore::open(&db_path)?;
+    // Database URL from env var, then default (matches docker-compose service).
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:mysecretpassword@localhost:5432/vector_db".to_string());
+    let store = RagStore::open(&database_url)?;
 
     cli::run(&api_url, smart_router, store, config)
 }

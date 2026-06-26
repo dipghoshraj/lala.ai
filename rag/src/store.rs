@@ -1,59 +1,59 @@
+﻿use std::sync::Mutex;
+
 use anyhow::{bail, Result};
-use rusqlite::Connection;
+use pgvector::Vector;
+use postgres::{Client, NoTls};
 use uuid::Uuid;
 
 use crate::chunker::chunk;
-use crate::types::{build_memory_block, Chunk, MemoryBlock};
+use crate::migrate::run_migrations;
+use crate::types::{build_memory_block, Chunk, EmbeddingSearchResult, MemoryBlock};
+
+/// Default directory where migration SQL files are discovered.
+const DEFAULT_MIGRATIONS_DIR: &str = "./migrations";
 
 pub struct RagStore {
-    conn: Connection,
+    /// Interior-mutable client so all public methods can take `&self`,
+    /// matching the original SQLite-based API.
+    client: Mutex<Client>,
 }
 
 impl RagStore {
-    /// Open (or create) the SQLite DB at `path` and initialise the schema.
-    pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path)?;
+    /// Connect to PostgreSQL, run any pending migrations, and return a store.
+    ///
+    /// `database_url` is a standard libpq connection string, e.g.
+    /// `"postgres://postgres:postgres@localhost:5432/lala"`.
+    ///
+    /// Migrations are loaded from `./migrations/` by default; override with
+    /// the `LALA_MIGRATIONS_DIR` environment variable.
+    pub fn open(database_url: &str) -> Result<Self> {
+        let mut client = Client::connect(database_url, NoTls)
+            .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {e}\nURL: {database_url}"))?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS documents (
-                id         TEXT PRIMARY KEY,
-                title      TEXT NOT NULL,
-                source     TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
+        let migrations_dir = std::env::var("LALA_MIGRATIONS_DIR")
+            .unwrap_or_else(|_| DEFAULT_MIGRATIONS_DIR.to_string());
 
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-                chunk_id    UNINDEXED,
-                document_id UNINDEXED,
-                chunk_index UNINDEXED,
-                chunk_text,
-                char_count  UNINDEXED
-            );
+        run_migrations(&mut client, &migrations_dir)?;
 
-            CREATE TABLE IF NOT EXISTS memory_blocks (
-                id            TEXT PRIMARY KEY,
-                document_id   TEXT NOT NULL,
-                chunk_index   INTEGER NOT NULL,
-                chunk_text    TEXT NOT NULL,
-                facts         TEXT NOT NULL,
-                capabilities  TEXT NOT NULL,
-                constraints   TEXT NOT NULL,
-                created_at    TEXT NOT NULL
-            );",
-        )?;
-
-        Ok(Self { conn })
+        Ok(Self {
+            client: Mutex::new(client),
+        })
     }
 
-    /// Chunk `text`, insert into `documents` + `chunks_fts`, return chunk count.
+    // ── Write ─────────────────────────────────────────────────────────────────
+
+    /// Chunk `text`, insert into `documents` + `chunks`, return chunk count.
     ///
-    /// Skips if a document with the same `source` already exists.
+    /// Skips (returns an error) if a document with the same `source` already exists.
     pub fn store(&self, title: &str, source: &str, text: &str) -> Result<usize> {
-        let exists: bool = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM documents WHERE source = ?1)",
-            [source],
-            |row| row.get(0),
-        )?;
+        let mut client = self.client.lock().unwrap();
+
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM documents WHERE source = $1)",
+                &[&source],
+            )?
+            .get(0);
 
         if exists {
             bail!("Already ingested: {source}");
@@ -67,35 +67,39 @@ impl RagStore {
             return Ok(0);
         }
 
-        let tx = self.conn.unchecked_transaction()?;
+        let mut tx = client.transaction()?;
 
         tx.execute(
-            "INSERT INTO documents (id, title, source, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![doc_id, title, source, created_at],
+            "INSERT INTO documents (id, title, source, created_at) VALUES ($1, $2, $3, $4)",
+            &[&doc_id, &title, &source, &created_at],
         )?;
 
         for (i, chunk_text) in chunks.iter().enumerate() {
             let chunk_id = Uuid::new_v4().to_string();
+            let char_count = chunk_text.len() as i32;
+            let chunk_idx = i as i32;
+
             tx.execute(
-                "INSERT INTO chunks_fts (chunk_id, document_id, chunk_index, chunk_text, char_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![chunk_id, doc_id, i, chunk_text, chunk_text.len()],
+                "INSERT INTO chunks (chunk_id, document_id, chunk_index, chunk_text, char_count)
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[&chunk_id, &doc_id, &chunk_idx, chunk_text, &char_count],
             )?;
 
             let (facts, capabilities, constraints) = build_memory_block(chunk_text);
             let memory_id = Uuid::new_v4().to_string();
             tx.execute(
-                "INSERT INTO memory_blocks (id, document_id, chunk_index, chunk_text, facts, capabilities, constraints, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![
-                    memory_id,
-                    doc_id,
-                    i as i64,
+                "INSERT INTO memory_blocks
+                     (id, document_id, chunk_index, chunk_text, facts, capabilities, constraints, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[
+                    &memory_id,
+                    &doc_id,
+                    &chunk_idx,
                     chunk_text,
-                    facts,
-                    capabilities,
-                    constraints,
-                    created_at,
+                    &facts,
+                    &capabilities,
+                    &constraints,
+                    &created_at,
                 ],
             )?;
         }
@@ -105,171 +109,258 @@ impl RagStore {
         Ok(chunks.len())
     }
 
-    /// Ingest a document and store chunks with raw text in memory fields.
-    ///
-    /// No LLM memory extraction is invoked; all data stays as text chunks.
+    /// Alias for `store()` — ingest a document without LLM memory extraction.
     pub fn ingest(&self, title: &str, source: &str, text: &str) -> Result<usize> {
         self.store(title, source, text)
     }
 
-    /// BM25 full-text search — return top `k` chunks ordered by relevance.
+    /// Store a precomputed embedding for a chunk.
+    ///
+    /// Upserts — if an embedding for `chunk_id` already exists it is replaced.
+    ///
+    /// # Arguments
+    /// * `chunk_id`    — must reference an existing row in `chunks`
+    /// * `document_id` — must reference an existing row in `documents`
+    /// * `embedding`   — dense float vector (must be 384 dimensions for the
+    ///                   default `all-MiniLM-L6-v2` model)
+    /// * `model_name`  — name of the embedding model used
+    pub fn store_embedding(
+        &self,
+        chunk_id: &str,
+        document_id: &str,
+        embedding: Vec<f32>,
+        model_name: &str,
+    ) -> Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let vec = Vector::from(embedding);
+
+        let mut client = self.client.lock().unwrap();
+        client.execute(
+            "INSERT INTO chunk_embeddings (id, chunk_id, document_id, embedding, model_name)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (chunk_id) DO UPDATE
+                 SET embedding  = EXCLUDED.embedding,
+                     model_name = EXCLUDED.model_name,
+                     created_at = now()",
+            &[&id, &chunk_id, &document_id, &vec, &model_name],
+        )?;
+        Ok(())
+    }
+
+    // ── Read ──────────────────────────────────────────────────────────────────
+
+    /// Full-text search using PostgreSQL `websearch_to_tsquery`.
+    ///
+    /// Returns up to `k` chunks ranked by `ts_rank_cd` (higher = more relevant).
     pub fn retrieve(&self, query: &str, k: usize) -> Result<Vec<Chunk>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT c.chunk_id, c.document_id, c.chunk_index, c.chunk_text,
-                    bm25(chunks_fts) AS score, d.title, d.source
-             FROM   chunks_fts c
+        let k_i64 = k as i64;
+        let mut client = self.client.lock().unwrap();
+
+        let rows = client.query(
+            "SELECT c.chunk_id,
+                    c.document_id,
+                    c.chunk_index,
+                    c.chunk_text,
+                    ts_rank_cd(c.fts_vector, websearch_to_tsquery('english', $1)) AS score,
+                    d.title,
+                    d.source
+             FROM   chunks c
              JOIN   documents d ON d.id = c.document_id
-             WHERE  c.chunk_text MATCH ?1
-             ORDER  BY bm25(chunks_fts)
-             LIMIT  ?2",
+             WHERE  c.fts_vector @@ websearch_to_tsquery('english', $1)
+             ORDER  BY score DESC
+             LIMIT  $2",
+            &[&query, &k_i64],
         )?;
 
-        let rows = stmt.query_map(rusqlite::params![query, k], |row| {
-            Ok(Chunk {
-                id: row.get(0)?,
-                document_id: row.get(1)?,
-                chunk_index: row.get::<_, i64>(2)? as usize,
-                chunk_text: row.get(3)?,
-                score: row.get(4)?,
-                title: row.get(5)?,
-                source: row.get(6)?,
+        let results = rows
+            .into_iter()
+            .map(|row| Chunk {
+                id: row.get(0),
+                document_id: row.get(1),
+                chunk_index: row.get::<_, i32>(2) as usize,
+                chunk_text: row.get(3),
+                score: row.get(4),
+                title: row.get(5),
+                source: row.get(6),
             })
-        })?;
+            .collect();
 
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
         Ok(results)
     }
 
-    /// Retrieve structured memory blocks for the given query.
-    pub fn retrieve_memory_blocks(&self, query: &str, k: usize) -> Result<Vec<MemoryBlock>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT b.id, b.document_id, b.chunk_index, b.chunk_text,
-                    b.facts, b.capabilities, b.constraints,
-                    d.title, d.source
-             FROM   chunks_fts c
-             JOIN   memory_blocks b ON b.document_id = c.document_id AND b.chunk_index = c.chunk_index
-             JOIN   documents d ON d.id = c.document_id
-             WHERE  c.chunk_text MATCH ?1
-             ORDER  BY bm25(chunks_fts)
-             LIMIT  ?2",
+    /// Vector similarity search using pgvector cosine distance (`<=>`).
+    ///
+    /// `embedding` must have the same dimensions as stored embeddings (384).
+    /// Returns up to `k` results sorted by ascending cosine distance
+    /// (closer = more similar).
+    pub fn retrieve_by_embedding(
+        &self,
+        embedding: Vec<f32>,
+        k: usize,
+    ) -> Result<Vec<EmbeddingSearchResult>> {
+        let k_i64 = k as i64;
+        let vec = Vector::from(embedding);
+        let mut client = self.client.lock().unwrap();
+
+        let rows = client.query(
+            "SELECT e.chunk_id,
+                    e.document_id,
+                    c.chunk_text,
+                    d.title,
+                    d.source,
+                    (e.embedding <=> $1) AS distance
+             FROM   chunk_embeddings e
+             JOIN   chunks    c ON c.chunk_id  = e.chunk_id
+             JOIN   documents d ON d.id        = e.document_id
+             ORDER  BY distance ASC
+             LIMIT  $2",
+            &[&vec, &k_i64],
         )?;
 
-        let rows = stmt.query_map(rusqlite::params![query, k], |row| {
-            Ok(MemoryBlock {
-                id: row.get(0)?,
-                document_id: row.get(1)?,
-                chunk_index: row.get::<_, i64>(2)? as usize,
-                chunk_text: row.get(3)?,
-                facts: row.get(4)?,
-                capabilities: row.get(5)?,
-                constraints: row.get(6)?,
-                title: row.get(7)?,
-                source: row.get(8)?,
+        let results = rows
+            .into_iter()
+            .map(|row| EmbeddingSearchResult {
+                chunk_id: row.get(0),
+                document_id: row.get(1),
+                chunk_text: row.get(2),
+                title: row.get(3),
+                source: row.get(4),
+                distance: row.get(5),
             })
-        })?;
+            .collect();
 
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
+        Ok(results)
+    }
+
+    /// Retrieve structured memory blocks for a full-text query.
+    pub fn retrieve_memory_blocks(&self, query: &str, k: usize) -> Result<Vec<MemoryBlock>> {
+        let k_i64 = k as i64;
+        let mut client = self.client.lock().unwrap();
+
+        let rows = client.query(
+            "SELECT b.id,
+                    b.document_id,
+                    b.chunk_index,
+                    b.chunk_text,
+                    b.facts,
+                    b.capabilities,
+                    b.constraints,
+                    d.title,
+                    d.source
+             FROM   chunks c
+             JOIN   memory_blocks b
+                    ON  b.document_id = c.document_id
+                    AND b.chunk_index = c.chunk_index
+             JOIN   documents d ON d.id = c.document_id
+             WHERE  c.fts_vector @@ websearch_to_tsquery('english', $1)
+             ORDER  BY ts_rank_cd(c.fts_vector, websearch_to_tsquery('english', $1)) DESC
+             LIMIT  $2",
+            &[&query, &k_i64],
+        )?;
+
+        let results = rows
+            .into_iter()
+            .map(|row| MemoryBlock {
+                id: row.get(0),
+                document_id: row.get(1),
+                chunk_index: row.get::<_, i32>(2) as usize,
+                chunk_text: row.get(3),
+                facts: row.get(4),
+                capabilities: row.get(5),
+                constraints: row.get(6),
+                title: row.get(7),
+                source: row.get(8),
+            })
+            .collect();
+
         Ok(results)
     }
 
     /// Count of documents in the store.
     pub fn document_count(&self) -> Result<usize> {
-        let count: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))?;
-        Ok(count as usize)
+        let mut client = self.client.lock().unwrap();
+        let row = client.query_one("SELECT COUNT(*) FROM documents", &[])?;
+        Ok(row.get::<_, i64>(0) as usize)
     }
 
     /// Count of chunks in the store.
     pub fn chunk_count(&self) -> Result<usize> {
-        let count: i64 = self.conn.query_row("SELECT COUNT(*) FROM chunks_fts", [], |row| row.get(0))?;
-        Ok(count as usize)
+        let mut client = self.client.lock().unwrap();
+        let row = client.query_one("SELECT COUNT(*) FROM chunks", &[])?;
+        Ok(row.get::<_, i64>(0) as usize)
     }
 
     /// Retrieve all memory blocks for a given document_id.
     pub fn memory_blocks_for_document(&self, doc_id: &str) -> Result<Vec<MemoryBlock>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT b.id, b.document_id, b.chunk_index, b.chunk_text,
-                    b.facts, b.capabilities, b.constraints,
-                    d.title, d.source
+        let mut client = self.client.lock().unwrap();
+
+        let rows = client.query(
+            "SELECT b.id,
+                    b.document_id,
+                    b.chunk_index,
+                    b.chunk_text,
+                    b.facts,
+                    b.capabilities,
+                    b.constraints,
+                    d.title,
+                    d.source
              FROM   memory_blocks b
              JOIN   documents d ON d.id = b.document_id
-             WHERE  b.document_id = ?1
+             WHERE  b.document_id = $1
              ORDER  BY b.chunk_index ASC",
+            &[&doc_id],
         )?;
 
-        let rows = stmt.query_map(rusqlite::params![doc_id], |row| {
-            Ok(MemoryBlock {
-                id: row.get(0)?,
-                document_id: row.get(1)?,
-                chunk_index: row.get::<_, i64>(2)? as usize,
-                chunk_text: row.get(3)?,
-                facts: row.get(4)?,
-                capabilities: row.get(5)?,
-                constraints: row.get(6)?,
-                title: row.get(7)?,
-                source: row.get(8)?,
+        Ok(rows
+            .into_iter()
+            .map(|row| MemoryBlock {
+                id: row.get(0),
+                document_id: row.get(1),
+                chunk_index: row.get::<_, i32>(2) as usize,
+                chunk_text: row.get(3),
+                facts: row.get(4),
+                capabilities: row.get(5),
+                constraints: row.get(6),
+                title: row.get(7),
+                source: row.get(8),
             })
-        })?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
-        Ok(results)
+            .collect())
     }
 
     /// Retrieve all memory blocks for a given source path.
     pub fn memory_blocks_for_source(&self, source_path: &str) -> Result<Vec<MemoryBlock>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT b.id, b.document_id, b.chunk_index, b.chunk_text,
-                    b.facts, b.capabilities, b.constraints,
-                    d.title, d.source
+        let mut client = self.client.lock().unwrap();
+
+        let rows = client.query(
+            "SELECT b.id,
+                    b.document_id,
+                    b.chunk_index,
+                    b.chunk_text,
+                    b.facts,
+                    b.capabilities,
+                    b.constraints,
+                    d.title,
+                    d.source
              FROM   memory_blocks b
              JOIN   documents d ON d.id = b.document_id
-             WHERE  d.source = ?1
+             WHERE  d.source = $1
              ORDER  BY b.chunk_index ASC",
+            &[&source_path],
         )?;
 
-        let rows = stmt.query_map(rusqlite::params![source_path], |row| {
-            Ok(MemoryBlock {
-                id: row.get(0)?,
-                document_id: row.get(1)?,
-                chunk_index: row.get::<_, i64>(2)? as usize,
-                chunk_text: row.get(3)?,
-                facts: row.get(4)?,
-                capabilities: row.get(5)?,
-                constraints: row.get(6)?,
-                title: row.get(7)?,
-                source: row.get(8)?,
+        Ok(rows
+            .into_iter()
+            .map(|row| MemoryBlock {
+                id: row.get(0),
+                document_id: row.get(1),
+                chunk_index: row.get::<_, i32>(2) as usize,
+                chunk_text: row.get(3),
+                facts: row.get(4),
+                capabilities: row.get(5),
+                constraints: row.get(6),
+                title: row.get(7),
+                source: row.get(8),
             })
-        })?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
-        Ok(results)
-    }
-
-    /// Update the facts, capabilities, and constraints for a single memory block.
-    pub fn update_memory_block(
-        &self,
-        block_id: &str,
-        facts: &str,
-        capabilities: &str,
-        constraints: &str,
-    ) -> Result<()> {
-        self.conn.execute(
-            "UPDATE memory_blocks SET facts = ?1, capabilities = ?2, constraints = ?3 WHERE id = ?4",
-            rusqlite::params![facts, capabilities, constraints, block_id],
-        )?;
-        Ok(())
+            .collect())
     }
 }
