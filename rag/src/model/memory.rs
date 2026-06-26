@@ -1,6 +1,6 @@
 
 use uuid::Uuid;
-use crate::{RagStore, model::chunk::DocumentChunk};
+use crate::{model::chunk::DocumentChunk};
 use crate::model::chrono_now;
 
 #[derive(Debug, Clone)]
@@ -47,7 +47,7 @@ impl  MemoryBlockRecord {
         }
     }
 
-    pub fn insert(&self, store: &RagStore) -> anyhow::Result<()> {
+    pub fn insert(&self) -> anyhow::Result<()> {
         let db = crate::model::db();
         let mut client = db.client();
         client.execute(
@@ -58,7 +58,7 @@ impl  MemoryBlockRecord {
         Ok(())
     }
 
-    pub fn fetch_by_documents(store: &RagStore, query: &str, limit: i64) -> anyhow::Result<Vec<MemoryBlock>> {
+    pub fn fetch_by_documents( query: &str, limit: i64) -> anyhow::Result<Vec<MemoryBlock>> {
         let db = crate::model::db();
         let mut client = db.client();
         let rows = client.query(

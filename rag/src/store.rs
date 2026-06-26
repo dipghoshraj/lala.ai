@@ -1,13 +1,6 @@
-﻿use std::sync::Mutex;
-
-use anyhow::{bail, Result};
-use pgvector::Vector;
-use postgres::{Client, NoTls};
-use uuid::Uuid;
+﻿use anyhow::{bail, Result};
 
 use crate::chunker::chunk;
-use crate::migrate::run_migrations;
-use crate::types::{build_memory_block, EmbeddingSearchResult};
 use crate::model::{memory, document, chunk};
 use crate::model::chunk::ChunkRow;
 use crate::model::memory::MemoryBlock;
@@ -20,6 +13,7 @@ impl RagStore {
     ///
     /// Skips (returns an error) if a document with the same `source` already exists.
     pub fn store(&self, title: &str, source: &str, text: &str) -> Result<usize> {
+        println!("Storing document: {title} ({source})");
         let exists: bool = document::Document::exist(source)?;
         if exists {
             bail!("Already ingested: {source}");
@@ -39,7 +33,7 @@ impl RagStore {
             chunk.insert()?;
 
             let memory_block = memory::MemoryBlockRecord::from_chunk(&chunk);
-            memory_block.insert(&self)?;
+            memory_block.insert()?;
         }
         Ok(chunks.len())
     }
@@ -63,7 +57,7 @@ impl RagStore {
     /// Retrieve structured memory blocks for a full-text query.
     pub fn retrieve_memory_blocks(&self, query: &str, k: usize) -> Result<Vec<MemoryBlock>> {
         let k_i64 = k as i64;
-        let resuluts = memory::MemoryBlockRecord::fetch_by_documents(self, query, k_i64)?;
+        let resuluts = memory::MemoryBlockRecord::fetch_by_documents(query, k_i64)?;
         Ok(resuluts)
     }
 

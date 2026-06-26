@@ -27,6 +27,7 @@ impl Document {
             crate::model::sql::DOCUMENT_EXISTS,
             &[&source],
         )?;
+        print!("Document exist check for source: {source}, exists: {}\n", row.get::<_, i64>(0) > 0);
         Ok(row.get::<_, i64>(0) > 0)
     }
 
