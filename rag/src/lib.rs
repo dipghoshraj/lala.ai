@@ -3,6 +3,7 @@ mod migrate;
 mod store;
 mod types;
 pub mod news;
+pub mod model;
 
 pub use chunker::chunk;
 pub use migrate::run_migrations;
