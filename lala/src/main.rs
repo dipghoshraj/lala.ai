@@ -20,7 +20,7 @@ fn print_banner() {
     }
 
     println!("{}", "Intelligent • Developer • Productivity".green());
-    println!("{}", "⚡ Built with Rust".green());
+    println!("{}", "⚡ Built with love".green());
 }
 
 fn main() -> anyhow::Result<()> {
