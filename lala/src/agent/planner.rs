@@ -40,7 +40,27 @@ pub fn limit_chunks_by_tokens(chunks: Vec<rag::Chunk>, max_tokens: usize) -> Vec
 }
 
 /// Limit retrieved memory blocks to fit within a token budget.
-pub fn limit_memory_by_tokens(blocks: Vec<rag::MemoryBlock>, max_tokens: usize) -> Vec<rag::MemoryBlock> {
+
+fn normalize_rag_query(query: &str) -> String {
+    query
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c.is_whitespace() {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn limit_memory_by_tokens(
+    blocks: Vec<rag::MemoryBlock>,
+    max_tokens: usize,
+) -> Vec<rag::MemoryBlock> {
     let mut result = Vec::new();
     let mut used_tokens = 0;
 
@@ -62,20 +82,68 @@ pub fn limit_memory_by_tokens(blocks: Vec<rag::MemoryBlock>, max_tokens: usize) 
 
 /// Greeting / social phrases that never warrant reasoning.
 const DIRECT_PATTERNS: &[&str] = &[
-    "hello", "hi", "hey", "thanks", "thank you", "bye", "goodbye",
-    "good morning", "good evening", "good night", "good afternoon",
-    "ok", "okay", "sure", "yes", "no", "great", "perfect", "nice",
-    "cool", "awesome", "got it", "understood",
+    "hello",
+    "hi",
+    "hey",
+    "thanks",
+    "thank you",
+    "bye",
+    "goodbye",
+    "good morning",
+    "good evening",
+    "good night",
+    "good afternoon",
+    "ok",
+    "okay",
+    "sure",
+    "yes",
+    "no",
+    "great",
+    "perfect",
+    "nice",
+    "cool",
+    "awesome",
+    "got it",
+    "understood",
 ];
 
 /// Keywords that signal the query needs multi-step reasoning.
 const REASONING_TRIGGERS: &[&str] = &[
-    "why", "how", "explain", "analyze", "analyse", "compare",
-    "difference", "what if", "implement", "write", "debug", "fix",
-    "code", "algorithm", "calculate", "evaluate", "pros", "cons",
-    "summarize", "summarise", "describe", "define", "plan", "design",
-    "architecture", "step", "process", "reasoning", "derive", "prove",
-    "optimise", "optimize", "refactor", "suggest", "recommend",
+    "why",
+    "how",
+    "explain",
+    "analyze",
+    "analyse",
+    "compare",
+    "difference",
+    "what if",
+    "implement",
+    "write",
+    "debug",
+    "fix",
+    "code",
+    "algorithm",
+    "calculate",
+    "evaluate",
+    "pros",
+    "cons",
+    "summarize",
+    "summarise",
+    "describe",
+    "define",
+    "plan",
+    "design",
+    "architecture",
+    "step",
+    "process",
+    "reasoning",
+    "derive",
+    "prove",
+    "optimise",
+    "optimize",
+    "refactor",
+    "suggest",
+    "recommend",
 ];
 
 /// Returns `true` if the query warrants running through the reasoning step.
@@ -132,7 +200,11 @@ pub struct Agent<'a> {
 
 impl<'a> Agent<'a> {
     pub fn new(client: &'a ApiClient, store: &'a RagStore, config: LalaConfig) -> Self {
-        Self { client, store, config }
+        Self {
+            client,
+            store,
+            config,
+        }
     }
 
     /// Returns the context token budget used by the CLI for RAG context injection.
@@ -163,35 +235,21 @@ impl<'a> Agent<'a> {
     /// Retrieve relevant chunks from the RAG store for the given query.
     /// Returns the matched chunks, or an empty vec if nothing matched.
     pub fn retrieve_context(&self, query: &str) -> anyhow::Result<Vec<rag::Chunk>> {
-        // Strip characters that are special in FTS5 query syntax.
-        let sanitized: String = query
-            .chars()
-            .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
-            .collect();
-        // Join terms with OR so FTS5 matches any word (not all).
-        // This gives much better recall for conversational queries like
-        // "explain me about Lala front end" → "explain OR me OR about OR Lala OR front OR end".
-        let terms: Vec<&str> = sanitized.split_whitespace().collect();
-        if terms.is_empty() {
+        let normalized = normalize_rag_query(query);
+        if normalized.is_empty() {
             return Ok(Vec::new());
         }
-        let fts_query = terms.join(" OR ");
-        self.store.retrieve(&fts_query, Self::rag_fetch_limit())
+        self.store.retrieve(&normalized, Self::rag_fetch_limit())
     }
 
     /// Retrieve structured memory blocks for the given query.
     pub fn retrieve_memory_context(&self, query: &str) -> anyhow::Result<Vec<rag::MemoryBlock>> {
-        let sanitized: String = query
-            .chars()
-            .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
-            .collect();
-        let terms: Vec<&str> = sanitized.split_whitespace().collect();
-        if terms.is_empty() {
+        let normalized = normalize_rag_query(query);
+        if normalized.is_empty() {
             return Ok(Vec::new());
         }
-        let fts_query = terms.join(" OR ");
         self.store
-            .retrieve_memory_blocks(&fts_query, Self::rag_fetch_limit())
+            .retrieve_memory_blocks(&normalized, Self::rag_fetch_limit())
     }
 
     /// Step 1 — send the full history to the reasoning model.
@@ -265,11 +323,7 @@ impl<'a> Agent<'a> {
     ///
     /// Falls back to the local heuristic (`needs_reasoning`) on any error so
     /// the REPL keeps working even when the server is temporarily unreachable.
-    pub fn classify_query(
-        &self,
-        input: &str,
-        history: &[ChatMessage],
-    ) -> RouteDecision {
+    pub fn classify_query(&self, input: &str, history: &[ChatMessage]) -> RouteDecision {
         // Extract last ≤2 non-system turns as context for the server.
         let context: Vec<ChatMessage> = history
             .iter()
@@ -300,7 +354,11 @@ impl<'a> Agent<'a> {
     /// straight to the decision model under its normal system prompt.
     /// Used for simple or conversational queries classified by `classify_query()`.
     /// When `context` is provided, it is appended to the decision system prompt.
-    pub fn run_direct(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<String> {
+    pub fn run_direct(
+        &self,
+        history: &[ChatMessage],
+        context: Option<&str>,
+    ) -> anyhow::Result<String> {
         let base = &self.config.decision_system_prompt;
         let system = match context {
             Some(ctx) => format!(
