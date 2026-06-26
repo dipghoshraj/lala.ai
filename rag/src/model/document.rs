@@ -1,8 +1,7 @@
-use postgres::Row;
+// use postgres::Row;
 use uuid::Uuid;
 
-use crate::types::{Chunk, EmbeddingSearchResult, MemoryBlock, build_memory_block, chrono_now};
-
+use crate::model::chrono_now;
 #[derive(Debug, Clone)]
 pub struct Document {
     pub id: String,
