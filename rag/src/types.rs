@@ -8,7 +8,7 @@ pub struct Chunk {
     pub chunk_index: usize,
     pub chunk_text: String,
     /// `ts_rank_cd` score from PostgreSQL — higher is more relevant.
-    pub score: f64,
+    pub score: f32,
     /// Title of the parent document.
     pub title: String,
     /// Source path of the parent document.

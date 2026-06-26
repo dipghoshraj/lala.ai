@@ -47,8 +47,8 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     volumes:
-      - ${MODELS_DIR:-./models}:/models:ro
-      - ${CONFIG_PATH:-./configs/ai-config.example.yaml}:/app/ai-config.yaml:ro
+      - ${MODELS_DIR:-D:/models}:/models:ro
+      - ${CONFIG_PATH:-./ai-config.yaml}:/app/ai-config.yaml:ro
 
 volumes:
   pgdata:
