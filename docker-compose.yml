@@ -37,6 +37,19 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  llm-inference:
+    build:
+      context: .
+      dockerfile: LLML/Dockerfile.llm-inference
+    image: llm-gateway:latest
+    container_name: llm-gateway
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+      - ${CONFIG_PATH:-./configs/ai-config.example.yaml}:/app/ai-config.yaml:ro
+
 volumes:
   pgdata:
   chroma_data:
