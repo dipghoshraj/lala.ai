@@ -6,7 +6,7 @@ A local **Agentic RAG** system built in Rust and Python. Two services communicat
 - **`LLML`** — local LLM inference server (Python/FastAPI, loads GGUF models, OpenAI-compatible API)
 - **`telegram/`** — Telegram bot client (Python, same inference pipeline over HTTP)
 
-PostgreSQL + pgvector is provisioned for RAG storage (Phase 1+).
+PostgreSQL + pgvector is provisioned for RAG storage and is active in the current implementation.
 
 > Full architecture reference: [doc/architecture.md](doc/architecture.md)
 
@@ -37,22 +37,28 @@ It routes questions through `decision` only for fast replies, or through `reason
 
 ### 1. Start the inference server
 
-**Option A — Docker (recommended)**
+**Option A — Docker Compose (recommended)**
+
+A consolidated `docker-compose.yml` is included to start the inference server, PostgreSQL, and optional ChromaDB together.
 
 ```sh
-# Build the image (from repo root)
-docker build -f LLML.Dockerfile -t lala-llml .
-
-# Run — mount your models directory and (optionally) override the config
-docker run -p 3000:3000 \
-  -v /path/to/your/models:/models \
-  -v ./ai-config.yaml:/app/ai-config.yaml \
-  lala-llml
+docker compose up -d
 ```
 
-The `modelPath` values in `ai-config.yaml` must be absolute container paths (prefixed with `/models/`):
-```yaml
-modelPath: "/models/your-model.Q4_K_M.gguf"
+The compose file defines these services:
+- `db` — PostgreSQL with pgvector for RAG storage
+- `llm-inference` — LLML inference server built from `LLML/Dockerfile.llm-inference`
+- `chroma` — optional ChromaDB server for future vector store use
+
+By default the compose file maps:
+- `3000:3000` for LLML
+- `5432:5432` for PostgreSQL
+- `8000:8000` for ChromaDB
+
+If your models or config live outside the repo, override the paths before `docker compose up`:
+
+```sh
+MODELS_DIR=/path/to/models CONFIG_PATH=./ai-config.yaml docker compose up -d
 ```
 
 **Option B — Local Python**
@@ -73,6 +79,12 @@ cargo run -- http://192.168.1.10:3000   # custom server URL
 LLML_API_URL=http://192.168.1.10:3000 cargo run
 ```
 
+If you are using PostgreSQL from Docker Compose, set `DATABASE_URL` if needed:
+
+```sh
+DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/vector_db cargo run
+```
+
 ### 3. (Optional) Telegram bot
 
 ```sh
@@ -84,24 +96,24 @@ python app.py
 
 ### 4. (Optional) PostgreSQL + pgvector
 
+The `db` service in `docker-compose.yml` already provisions PostgreSQL with `pgvector`.
+If you want a standalone PostgreSQL container instead of Compose, you can still build from `psql.Dockerfile`:
+
 ```sh
 docker build -f psql.Dockerfile -t lala-postgres .
 docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 lala-postgres
-# DATABASE_URL=postgres://postgres:postgres@localhost:5432/lala
 ```
 
 ### Running all services together
 
 ```sh
-# Terminal 1 — inference server (Docker)
-docker build -f LLML.Dockerfile -t lala-llml .
-docker run -p 3000:3000 -v /path/to/models:/models lala-llml
+# Start everything with Docker Compose
+docker compose up -d
 
-# Terminal 2 — PostgreSQL
-docker build -f psql.Dockerfile -t lala-postgres .
-docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 lala-postgres
+# Follow logs for the inference service
+docker compose logs -f llm-inference
 
-# Terminal 3 — CLI client
+# Start the CLI client locally
 cd lala && cargo run
 ```
 
@@ -347,9 +359,9 @@ models:
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 0 | In progress | Layered architecture: CLI → Agent (router + planner) → LLML server |
+| 0 | Complete | Layered architecture: CLI → Agent → RAG → LLML server; PostgreSQL + pgvector active |
 | 1 | Planned | Session history persistence, query rewriting, streaming to CLI |
-| 2 | Planned | RAG: chunking, bge-small embeddings, pgvector retrieval, reranking |
+| 2 | Planned | Hybrid keyword + vector retrieval, embedding-based reranking |
 | 3 | Planned | Learned router (embedding similarity + user feedback loop) |
 | 4 | Planned | HTTP/gRPC interface, metadata filtering, citation grounding |
 
@@ -405,11 +417,11 @@ models:
 - `"reasoning"` — multi-step analysis, code review, comparisons
 - `"decision"` — fast replies, social/API patterns, conversational replies
 
-### RAG (Phase 0)
+### RAG
 - Standalone `rag/` library crate with zero dependencies on `lala`, agent, or model layers
 - Consumers depend via `rag = { path = "../rag" }` and call `RagStore` public API
-- SQLite + FTS5 for BM25 keyword retrieval (no neural embeddings yet)
-- Planned: PostgreSQL + pgvector for Phase 1+ (vector search)
+- PostgreSQL FTS for BM25 keyword retrieval and pgvector for vector storage
+- Embeddings are stored in `chunk_embeddings`; semantic retrieval and hybrid search are future work
 
 ### Cargo workspace
 - Root `Cargo.toml` defines `members = ["lala", "rag"]`

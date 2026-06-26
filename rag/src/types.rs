@@ -1,32 +1,17 @@
 use anyhow::Result;
 
-/// A retrieved chunk with its BM25 relevance score.
+/// A retrieved chunk from pgvector cosine-similarity search.
 #[derive(Clone)]
-pub struct Chunk {
-    pub id: String,
+pub struct EmbeddingSearchResult {
+    pub chunk_id: String,
     pub document_id: String,
-    pub chunk_index: usize,
     pub chunk_text: String,
-    /// BM25 rank from SQLite — negative float, more negative = better match.
-    pub score: f64,
     /// Title of the parent document.
     pub title: String,
     /// Source path of the parent document.
     pub source: String,
-}
-
-/// A structured memory block extracted from a chunk of text.
-#[derive(Clone)]
-pub struct MemoryBlock {
-    pub id: String,
-    pub document_id: String,
-    pub chunk_index: usize,
-    pub chunk_text: String,
-    pub facts: String,
-    pub capabilities: String,
-    pub constraints: String,
-    pub title: String,
-    pub source: String,
+    /// Cosine distance (0.0 = identical, 2.0 = opposite).
+    pub distance: f64,
 }
 
 /// SQLite FTS5-backed document store for keyword (BM25) retrieval.

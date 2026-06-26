@@ -1,6 +1,6 @@
 # lala.ai — System Architecture
 
-> **Current state:** Phase 0 complete — five-layer architecture (Interface → Agent → RAG → Model + DB). `lala` Rust CLI + `LLML` Python inference server + `telegram` Python bot connected over HTTP. RAG retrieval is **live** on every query via SQLite FTS5 + memory blocks. LLML serves OpenAI-compatible API with two model roles (`reasoning` / `decision`) and query-classification endpoint (`/v1/classify`). Qdrant vector search migration planned for Phase 1.
+> **Current state:** Phase 0 complete — five-layer architecture (Interface → Agent → RAG → Model + DB). `lala` Rust CLI + `LLML` Python inference server + `telegram` Python bot connected over HTTP. RAG retrieval is **live** on every query via PostgreSQL FTS (`tsvector` + GIN) + pgvector (`vector(384)` IVFFlat) + memory blocks. LLML serves OpenAI-compatible API with two model roles (`reasoning` / `decision`) and query-classification endpoint (`/v1/classify`).
 
 ---
 
@@ -15,7 +15,7 @@ lala.ai/
 ├── lala/                   # Rust CLI client (binary crate)
 │   ├── Cargo.toml          # deps: reqwest, rustyline, serde, anyhow, rag (path)
 │   └── src/
-│       ├── main.rs         # Entry point — resolves API URL, DB path, SMART_ROUTER; inits RagStore
+│   ├── main.rs         # Entry point — resolves API URL, DATABASE_URL, SMART_ROUTER; inits RagStore
 │       ├── cli/
 │       │   ├── mod.rs      # REPL loop, animated banner, command/chat dispatch
 │       │   ├── chat.rs     # Chat struct — history, retrieve+inject context, spinner
@@ -26,12 +26,17 @@ lala.ai/
 │           ├── mod.rs
 │           ├── model.rs    # ApiClient — HTTP wrapper (chat, classify); RouteDecision enum
 │           └── planner.rs  # Agent — query router, reasoning→decision pipeline
-├── rag/                    # Standalone RAG library crate (Phase 0)
-│   ├── Cargo.toml          # deps: rusqlite (bundled), uuid (v4), anyhow, reqwest, rss, regex
+├── rag/                    # Standalone RAG library crate
+│   ├── Cargo.toml          # deps: postgres, pgvector, uuid (v4), anyhow, reqwest, rss, regex
 │   └── src/
-│       ├── lib.rs          # RagStore, Chunk, MemoryBlock, store/retrieve/memory APIs
+│       ├── lib.rs          # RagStore, Chunk, EmbeddingSearchResult, MemoryBlock — public API
+│       ├── store.rs        # PostgreSQL FTS + pgvector implementation
+│       ├── migrate.rs      # run_migrations() — idempotent SQL file runner
 │       ├── chunker.rs      # chunk(text, chunk_size, overlap) → Vec<String>
 │       └── news.rs         # ingest_news_feed(store, rss_url, delay_ms) RSS ingestion
+├── migrations/             # SQL files applied in lex order on RagStore::open()
+│   ├── 001_initial_schema.sql  # documents, chunks (tsvector GIN), memory_blocks
+│   └── 002_pgvector.sql        # vector extension + chunk_embeddings (vector(384) IVFFlat)
 ├── LLML/                   # Python inference server (FastAPI + llama-cpp-python)
 │   ├── main.py             # Entry point — loads config, starts uvicorn on :3000
 │   ├── config.py           # Deserializes ai-config.yaml → ModelParams
@@ -89,14 +94,11 @@ graph TD
     LLML --> Registry
     LLML --> Classifier
 
-    RAGCrate["rag/\nRust library crate\nSQLite FTS5 + memory blocks"] -->|"use rag::RagStore"| Lala
-    RAGCrate --> SQLite[("SQLite\nlala.db")]
+    RAGCrate["rag/\nRust library crate\nPostgreSQL FTS + pgvector"] -->|"use rag::RagStore"| Lala
+    RAGCrate -->|"TCP postgres"| DB
     Lala -->|"retrieve → inject context"| RAGCrate
 
-    Qdrant["Qdrant\n(planned Phase 1)"]
-    Qdrant -.->|"vector search migration"| RAGCrate
-
-    style Qdrant stroke-dasharray: 5 5
+    DB[("PostgreSQL + pgvector\n:5432\ndocker-compose db service")]
 ```
 
 Solid lines = live today. Dashed = provisioned, not yet in the request loop.
@@ -119,7 +121,7 @@ URL resolution order:
 2. `LLML_API_URL` environment variable
 3. Fallback: `http://localhost:3000`
 
-`main()` also reads `LALA_SMART_ROUTER` — if set to `"1"`, the LLM-based classifier is used instead of the local heuristic. Both values are passed to `cli::run(&api_url, smart_router)`.
+`main()` also reads `LALA_SMART_ROUTER` (set to `"1"` for LLM-based classification) and `DATABASE_URL` (libpq connection string; default matches the `docker-compose.yml` `db` service). `RagStore::open()` is called before `cli::run()` and runs any pending migrations automatically.
 
 ---
 
@@ -619,44 +621,39 @@ The `ApiClient` struct is the sole boundary between `lala` and `LLML`. It uses `
 
 ## 12. Infrastructure
 
-### SQLite + FTS5 (Phase 0 — Active)
+### PostgreSQL + pgvector (Active)
 
-**RAG Storage Engine:** SQLite + FTS5 for keyword (BM25) retrieval.
-- Accessed via `rusqlite` with `bundled` feature (no external install required)
-- DB file: `./lala.db` (overridable via `LALA_DB_PATH`)
-- **No external service required** — file-based storage
-- Owned and accessed exclusively by the `rag` crate inside `RagStore` struct
-- Schema: `documents` table + `chunks_fts` virtual table + `memory_blocks` table
+**RAG Storage Engine:** PostgreSQL FTS for keyword retrieval and pgvector for dense embeddings.
+- Accessed via `postgres` + `pgvector` in the `rag` crate
+- Connection string: `DATABASE_URL` (default `postgres://postgres:mysecretpassword@localhost:5432/vector_db`)
+- `docker-compose.yml` provides a `db` service on port `5432`
+- Schema: `documents`, `chunks` (`tsvector` GIN index), `memory_blocks`, `chunk_embeddings`
+- Migrations are applied automatically by `run_migrations()` from `migrations/*.sql`
 
 See [RAG.md](RAG.md) for the full RAG implementation details.
 
-### Qdrant Vector Search (Phase 1 — Planned)
+### Phase 1 semantic search (Planned)
 
-Phase 1 will replace SQLite FTS5 with **Qdrant** for dense vector (semantic) similarity search. The public `RagStore` API will remain unchanged; only the internal backend swaps.
+Phase 1 may add a semantic search path over pgvector embeddings. The public `RagStore` API will remain unchanged; only the backend implementation and vector store wiring change.
 
 **Planned changes:**
-- `rag/Cargo.toml`: Add `qdrant-client` dependency
-- `LLML/api/routes.py`: Add `POST /v1/embed` endpoint (embedding model)
-- `ai-config.yaml`: Register embedding model (e.g. `bge-small-en-v1.5`)
-- `lala`: Add `LALA_QDRANT_URL` env var for Qdrant connection
-- Qdrant server: `docker run qdrant/qdrant -p 6333:6333`
+- Add an embedding endpoint in LLML or a local embedding model
+- Store chunk vectors in `chunk_embeddings` via `RagStore::store_embedding()`
+- Use `retrieve_by_embedding()` for semantic recall and reranking
+- Keep `retrieve()` and `retrieve_memory_blocks()` as the keyword fallback
 
 **Docker setup (future):**
 ```sh
-# LLML inference server (with embedding endpoint)
-docker build -f LLML.Dockerfile -t lala-llm .
+# LLML inference server
+docker build -f LLML.Dockerfile -t lala-llml .
+
 docker run -p 3000:3000 \
   -v /path/to/models:/models \
   -v ./ai-config.yaml:/app/ai-config.yaml \
   lala-llml
-
-# Qdrant vector database (Phase 1)
-docker run -p 6333:6333 -v qdrant_storage:/qdrant/storage qdrant/qdrant
 ```
 
-### PostgreSQL + pgvector (Future — Deferred)
-
-`psql.Dockerfile` is provisioned but **not used in Phase 0 or Phase 1**. It may be adopted in Phase 2+ for session/message/query/citation persistence and observability.
+`psql.Dockerfile` remains available for future PostgreSQL-based persistence work.
 
 ---
 
@@ -670,12 +667,12 @@ flowchart TD
         LLML1 --> LM1[llama_cpp model]
     end
 
-    subgraph target ["Target — Phase 0 (doc/phase0.md)"]
+    subgraph target ["Target — implemented architecture"]
         U2[User] --> IF[CLI\ncli.rs]
         IF --> AG[Agent Layer\nPlanner / Reasoner]
         AG --> RAG["rag/ crate\nRagStore: retrieve / store / chunk"]
         AG --> LLM[Model Layer\nApiClient → LLML]
-        RAG --> DB2[(SQLite + FTS5)]
+        RAG --> DB2[(PostgreSQL + pgvector)]
     end
 ```
 
@@ -684,14 +681,14 @@ flowchart TD
 | Concern | Phase 0 Status |
 |---------|---------------|
 | REPL / input | `cli/` directory with submodules for chat, commands, ingest, display ✅ |
-| RAG Layer | Standalone `rag/` crate with SQLite FTS5 + memory blocks, live context injection ✅ |
+| RAG Layer | Standalone `rag/` crate with PostgreSQL FTS + pgvector + memory blocks, live context injection ✅ |
 | Multi-model routing (server) | `ModelRegistry` + role-based routing ✅ |
 | Per-request temperature (server) | Wired through request/response ✅ |
 | Two-step agent loop | `Agent::run_reasoning()` + `run_decision()` with context injection ✅ |
 | Query routing | `POST /v1/classify` + `RouteDecision` + `LALA_SMART_ROUTER` ✅ |
 | Telegram bot | classify → direct | reason→decide + spoiler formatting + context injection ✅ |
 | Document ingestion | `/ingest`, `/ingest-file`, `/ingest-news` CLI commands ✅ |
-| Keyword retrieval | `/search`, `/memory-search` CLI commands (BM25 via FTS5) ✅ |
+| Keyword retrieval | `/search`, `/memory-search` CLI commands (BM25 via PostgreSQL FTS) ✅ |
 | Context injection | Auto-retrieve top-5 chunks + memory blocks, inject into system prompt on every query ✅ |
 | Planned: `/v1/embed` | Not yet — for Phase 1 Qdrant integration |
 | Planned: pgvector | Deferred — provisioned but not used in Phase 0 |
@@ -707,12 +704,13 @@ flowchart TD
 | `reqwest` (blocking + json) | HTTP client for LLML API |
 | `serde` / `serde_json` | JSON serialization of ChatMessage arrays |
 | `anyhow` | Error propagation |
-| `rag` (path dep) | Standalone RAG crate — SQLite FTS5 store + retrieve |
+| `rag` (path dep) | Standalone RAG crate — PostgreSQL FTS + pgvector store, retrieve, embed |
 
 ### rag (Phase 0)
 | Crate | Purpose |
 |-------|---------|
-| `rusqlite` (bundled) | SQLite + FTS5 for BM25 keyword retrieval |
+| `postgres` | Blocking PostgreSQL client (sync, no async runtime required) |
+| `pgvector` (postgres feature) | `Vector` type for `vector(384)` column, cosine `<=>` operator |
 | `uuid` | Document/chunk ID generation |
 | `anyhow` | Error propagation |
 

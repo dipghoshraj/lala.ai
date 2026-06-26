@@ -16,12 +16,12 @@ User (terminal)
       │
   rustyline REPL  →  command dispatch (/ingest, /ingest-news, /search, /memory-search, ...)
       │                         │
-      │                    rag::RagStore  ──►  SQLite FTS5 + memory_blocks (lala.db)
+      │                    rag::RagStore  ──►  PostgreSQL FTS + pgvector + memory_blocks
       │
   conversation history (in-memory)
       │
   agent pipeline:
-    ├── retrieve_context(query)        → top-5 BM25 chunks
+    ├── retrieve_context(query)        → top-5 keyword chunks
     ├── retrieve_memory_context(query) → top-5 structured memory blocks
     ├── inject context into system prompt (token budget: 800)
     └── POST /v1/chat/completions  ──►  LLML API server
@@ -69,8 +69,8 @@ LLML_API_URL=http://192.168.1.10:3000 cargo run
 # Enable LLM-based smart query router (requires LLML server)
 LALA_SMART_ROUTER=1 cargo run
 
-# Custom database path (default: ./lala.db)
-LALA_DB_PATH=/path/to/my.db cargo run
+# Database URL (default: postgres://postgres:mysecretpassword@localhost:5432/vector_db)
+DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/vector_db cargo run
 
 # Custom ingest directory (default: ./ingest)
 LALA_INGEST_DIR=/path/to/docs cargo run
@@ -84,7 +84,7 @@ URL resolution priority: **CLI argument → `LLML_API_URL` env var → `http://l
 |----------|---------|--------|
 | `LLML_API_URL` | `http://localhost:3000` | LLML inference server URL |
 | `LALA_SMART_ROUTER` | unset | Set to `1` to enable LLM-based query classification |
-| `LALA_DB_PATH` | `./lala.db` | SQLite database file path for RAG storage |
+| `DATABASE_URL` | `postgres://postgres:mysecretpassword@localhost:5432/vector_db` | PostgreSQL connection string for RAG storage |
 | `LALA_INGEST_DIR` | `./ingest` | Directory scanned by `/ingest` for batch ingestion |
 | `LALA_QDRANT_URL` | _(planned)_ | Qdrant endpoint URL — Phase 1 vector search migration |
 
@@ -110,15 +110,15 @@ Arrow-key history navigation (up/down) is provided by `rustyline`.
 
 ### Ingestion
 
-Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. Each file is read, chunked into 512-character overlapping windows (64-char overlap), and stored in SQLite FTS5 alongside auto-extracted memory blocks. Duplicate files (same source path) are skipped. Progress and a summary are displayed:
+Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. Each file is read, chunked into 512-character overlapping windows (64-char overlap), and stored in PostgreSQL with FTS-enabled chunk indexing and auto-extracted memory blocks. Duplicate files (same source path) are skipped. Progress and a summary are displayed:
 
 ```
 >> /ingest
   ℹ Found 3 file(s) in ./ingest/
   [1/3] architecture.md
   ✓ architecture.md → 12 chunks
-  [2/3] phase0.md
-  ✓ phase0.md → 8 chunks
+  [2/3] design.md
+  ✓ design.md → 8 chunks
   [3/3] notes.txt
   ⚠ notes.txt: Already ingested: ./ingest/notes.txt
   ────────────────────────────────────────────────────────────
@@ -313,7 +313,7 @@ This can be edited in `cli/mod.rs` under `const SYSTEM_PROMPT`.
 | `rustyline` | Readline-style input with history and arrow-key navigation |
 | `serde` / `serde_json` | HTTP request/response serialization |
 | `anyhow`    | Error propagation |
-| `rag` (path dep) | Standalone RAG crate — SQLite FTS5 keyword store, BM25 retrieve, memory blocks, RSS news ingestion |
+| `rag` (path dep) | Standalone RAG crate — PostgreSQL FTS + pgvector store, retrieve, embed |
 
 ---
 
@@ -334,14 +334,14 @@ See [LLML.md](LLML.md) for the server-side documentation.
 
 ---
 
-## Planned: Qdrant Vector Search (Phase 1)
+## Planned: Vector Search (Phase 1)
 
-The `rag` crate currently uses SQLite FTS5 for keyword (BM25) retrieval. Phase 1 will migrate the RAG backend to **Qdrant** for dense vector similarity search. The `RagStore` public API (`store()`, `retrieve()`, `retrieve_memory_blocks()`) will remain unchanged; only the backend implementation inside the `rag` crate changes.
+The `rag` crate currently uses PostgreSQL FTS for keyword retrieval and stores vector embeddings in pgvector. Phase 1 will extend the backend to add semantic recall over `chunk_embeddings` while preserving the `RagStore` API (`store()`, `retrieve()`, `retrieve_memory_blocks()`).
 
 Required additions (Phase 1):
-- `POST /v1/embed` endpoint in LLML to generate chunk/query embeddings
-- `LALA_QDRANT_URL` env var for the Qdrant gRPC/HTTP endpoint
-- Embedding model entry in `ai-config.yaml` (e.g. `bge-small-en-v1.5`)
-- `qdrant-client` dependency in `rag/Cargo.toml` replacing `rusqlite`
+- Embedding endpoint in LLML or a local embedding model to generate chunk/query vectors
+- `RagStore::store_embedding()` calls to persist chunk embeddings into `chunk_embeddings`
+- `RagStore::retrieve_by_embedding()` for semantic similarity search
+- Optional runtime config for embedding model and retrieval strategy
 
-See [doc/planning/phase0-rag.md](planning/phase0-rag.md) for the full migration plan.
+See [RAG.md](RAG.md) for the full RAG implementation details and storage design.

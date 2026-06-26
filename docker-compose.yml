@@ -1,0 +1,56 @@
+# docker-compose.yml — local development services for lala.ai
+#
+# ChromaDB runs in server mode with a persistent volume.
+# Switch ai-config.yaml to mode: server to use this instead of embedded mode.
+#
+# Usage:
+#   docker compose up -d chroma        # start ChromaDB only
+#   docker compose down                # stop all services
+#   docker compose down -v             # stop and wipe volumes
+
+services:
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_AUTH_CREDENTIALS_PROVIDER=chromadb.auth.token.TokenConfigServerAuthCredentialsProvider
+      - ALLOW_RESET=TRUE           # enables /api/v1/reset for dev convenience
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: pgvector-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: vector_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  llm-inference:
+    build:
+      context: .
+      dockerfile: LLML/Dockerfile.llm-inference
+    image: llm-gateway:latest
+    container_name: llm-gateway
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - ${MODELS_DIR:-D:/models}:/models:ro
+      - ${CONFIG_PATH:-./ai-config.yaml}:/app/ai-config.yaml:ro
+
+volumes:
+  pgdata:
+  chroma_data:
+    driver: local

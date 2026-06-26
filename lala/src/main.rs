@@ -3,10 +3,12 @@ mod cli;
 mod config;
 
 use crate::config::LalaConfig;
-use rag::RagStore;
+use rag;
 
 use figlet_rs::FIGfont;
 use colored::*;
+
+const DEFAULT_MIGRATIONS_DIR: &str = "./migrations";
 
 
 fn print_banner() {
@@ -37,9 +39,23 @@ fn main() -> anyhow::Result<()> {
         .map(|v| v.trim() == "1")
         .unwrap_or(false);
 
-    // DB path from env var, then default.
-    let db_path = std::env::var("LALA_DB_PATH").unwrap_or_else(|_| "./lala.db".to_string());
-    let store = RagStore::open(&db_path)?;
+    // Database URL from env var, then default (matches docker-compose service).
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:mysecretpassword@localhost:5432/vector_db".to_string());
+
+
+    // let store = RagStore::open(&database_url)?;
+    let _: () = rag::model::init_db(&database_url)?;
+
+    {
+        let mut client = rag::model::db().client();
+        let migrations_dir = std::env::var("LALA_MIGRATIONS_DIR")
+            .unwrap_or_else(|_| DEFAULT_MIGRATIONS_DIR.to_string());
+        rag::migrate::run_migrations(&mut client, &migrations_dir)?;
+    }
+
+    let store = rag::RagStore{};
+
 
     cli::run(&api_url, smart_router, store, config)
 }
