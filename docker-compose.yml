@@ -1,0 +1,30 @@
+# docker-compose.yml — local development services for lala.ai
+#
+# ChromaDB runs in server mode with a persistent volume.
+# Switch ai-config.yaml to mode: server to use this instead of embedded mode.
+#
+# Usage:
+#   docker compose up -d chroma        # start ChromaDB only
+#   docker compose down                # stop all services
+#   docker compose down -v             # stop and wipe volumes
+
+services:
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_AUTH_CREDENTIALS_PROVIDER=chromadb.auth.token.TokenConfigServerAuthCredentialsProvider
+      - ALLOW_RESET=TRUE           # enables /api/v1/reset for dev convenience
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  chroma_data:
+    driver: local

@@ -32,6 +32,8 @@ from fastapi import FastAPI
 from config import load_config, params_from_config
 from model import ModelRegistry, ModelRunner
 from api.routes import router
+from api.vector_routes import vector_router
+from vector.store import VectorStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,13 +57,23 @@ def build_app(config_path: str | Path) -> FastAPI:
 
     logger.info("registered roles: %s", ", ".join(registry.roles()))
 
+    # ── Vector store (ChromaDB) ───────────────────────────────────────────────
+    chroma_cfg: dict = config.chroma if hasattr(config, "chroma") and config.chroma else {}
+    try:
+        vector_store = VectorStore.from_config(chroma_cfg)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ChromaDB init failed (%s) — vector search disabled", exc)
+        vector_store = None
+
     app = FastAPI(
         title="LLML-py",
         description="Local LLM inference server — Python/FastAPI port of LLML (Rust/Axum)",
         version="0.1.0",
     )
     app.state.registry = registry
+    app.state.vector_store = vector_store
     app.include_router(router)
+    app.include_router(vector_router)
     return app
 
 

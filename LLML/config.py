@@ -58,6 +58,7 @@ class AiConfig:
     version: int
     model_types: ModelTypes
     models: list[Model]
+    chroma: dict[str, Any] | None = None
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -134,4 +135,5 @@ def load_config(path: str | Path) -> AiConfig:
         version=int(raw.get("version", 1)),
         model_types=ModelTypes(types=raw.get("Modeltypes", {}).get("types", [])),
         models=[_parse_model(m) for m in raw.get("Models", [])],
+        chroma=raw.get("chroma"),
     )
