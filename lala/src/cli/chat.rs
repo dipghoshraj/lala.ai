@@ -105,18 +105,19 @@ impl<'a> Chat<'a> {
             println!("{}{}{}", display::DIM, sep, display::RESET);
         }
 
-        let result = display::with_spinner("thinking", || {
-            self.agent.run_direct(&self.history, context_str.as_deref())
-        });
-
-        match result {
-            Ok(reply) => {
-                display::print_section("Answer", display::BOLD_CYAN, display::CYAN, &reply);
-                self.history.push(ChatMessage {
-                    role: "assistant".to_string(),
-                    content: reply,
-                });
-            }
+        match self.agent.run_direct_stream(&self.history, context_str.as_deref()) {
+            Ok(stream) => match display::print_section_stream("Answer", display::BOLD_CYAN, display::CYAN, stream) {
+                Ok(reply) => {
+                    self.history.push(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: reply,
+                    });
+                }
+                Err(e) => {
+                    display::error(&format!("Error streaming answer: {e}"));
+                    self.history.pop();
+                }
+            },
             Err(e) => {
                 display::error(&format!("Error: {e}"));
                 self.history.pop();
@@ -155,46 +156,37 @@ impl<'a> Chat<'a> {
 
         let ctx_ref = context_str.as_deref();
 
-        let reasoning_result = display::with_spinner("reasoning", || {
-            self.agent.run_reasoning(&self.history, ctx_ref)
-        });
-
-        match reasoning_result {
+        match self.agent.run_reasoning_stream(&self.history, ctx_ref) {
             Err(e) => {
                 display::error(&format!("Reasoning failed: {e}"));
                 self.history.pop();
             }
-            Ok(analysis) => {
-                display::print_section(
-                    "Reasoning",
-                    display::BOLD_YELLOW,
-                    display::DIM_YELLOW,
-                    &analysis,
-                );
-
-                let decision_result = display::with_spinner("deciding", || {
-                    self.agent.run_decision(&self.history, &analysis, ctx_ref)
-                });
-
-                match decision_result {
-                    Ok(reply) => {
-                        display::print_section(
-                            "Answer",
-                            display::BOLD_CYAN,
-                            display::CYAN,
-                            &reply,
-                        );
-                        self.history.push(ChatMessage {
-                            role: "assistant".to_string(),
-                            content: reply,
-                        });
-                    }
-                    Err(e) => {
-                        display::error(&format!("Decision failed: {e}"));
-                        self.history.pop();
+            Ok(stream) => match display::print_section_stream("Reasoning", display::BOLD_YELLOW, display::DIM_YELLOW, stream) {
+                Err(e) => {
+                    display::error(&format!("Error streaming reasoning: {e}"));
+                    self.history.pop();
+                }
+                Ok(analysis) => {
+                    match self.agent.run_decision_stream(&self.history, &analysis, ctx_ref) {
+                        Err(e) => {
+                            display::error(&format!("Decision failed: {e}"));
+                            self.history.pop();
+                        }
+                        Ok(stream) => match display::print_section_stream("Answer", display::BOLD_CYAN, display::CYAN, stream) {
+                            Ok(reply) => {
+                                self.history.push(ChatMessage {
+                                    role: "assistant".to_string(),
+                                    content: reply,
+                                });
+                            }
+                            Err(e) => {
+                                display::error(&format!("Error streaming answer: {e}"));
+                                self.history.pop();
+                            }
+                        },
                     }
                 }
-            }
+            },
         }
     }
 
