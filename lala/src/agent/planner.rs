@@ -194,14 +194,7 @@ impl<'a> Agent<'a> {
             .retrieve_memory_blocks(&fts_query, Self::rag_fetch_limit())
     }
 
-    /// Step 1 — send the full history to the reasoning model.
-    /// Returns the internal analysis string; does not modify history.
-    /// When `context` is provided, it is appended to the reasoning system prompt.
-    pub fn run_reasoning(
-        &self,
-        history: &[ChatMessage],
-        context: Option<&str>,
-    ) -> anyhow::Result<String> {
+    pub fn run_reasoning_stream(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<crate::agent::model::ChatStream> {
         let base = &self.config.reasoning_system_prompt;
         let system = match context {
             Some(ctx) => format!(
@@ -212,50 +205,7 @@ impl<'a> Agent<'a> {
             None => base.clone(),
         };
         let reasoning_history = Self::replace_system(history, &system);
-        self.client.reason(&reasoning_history, Some(512))
-    }
-
-    /// Step 2 — send a compact context (system + analysis + last user message)
-    /// to the decision model. Returns the final answer string.
-    /// When `context` is provided, it is appended to the decision system prompt.
-    pub fn run_decision(
-        &self,
-        history: &[ChatMessage],
-        analysis: &str,
-        context: Option<&str>,
-    ) -> anyhow::Result<String> {
-        let base = &self.config.decision_system_prompt;
-        let system = match context {
-            Some(ctx) => format!(
-                "{}\n\n--- Retrieved Context ---\n{}\n--- End Context ---\n\n\
-                 Use the retrieved context above to inform your answer when relevant.",
-                base, ctx
-            ),
-            None => base.clone(),
-        };
-
-        let last_user = history
-            .iter()
-            .rfind(|m| m.role == "user")
-            .map(|m| m.content.as_str())
-            .unwrap_or("");
-
-        let decision_messages = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: system,
-            },
-            ChatMessage {
-                role: "system".to_string(),
-                content: format!("[Internal analysis — do not quote this]\n{}", analysis),
-            },
-            ChatMessage {
-                role: "user".to_string(),
-                content: last_user.to_string(),
-            },
-        ];
-
-        self.client.decide(&decision_messages, Some(256))
+        self.client.reason_stream(&reasoning_history, Some(512))
     }
 
     /// Ask the LLML server to classify the query via `POST /v1/classify`.
@@ -296,11 +246,47 @@ impl<'a> Agent<'a> {
         }
     }
 
-    /// Direct path — skips reasoning and sends the full conversation history
-    /// straight to the decision model under its normal system prompt.
-    /// Used for simple or conversational queries classified by `classify_query()`.
-    /// When `context` is provided, it is appended to the decision system prompt.
-    pub fn run_direct(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<String> {
+    pub fn run_decision_stream(
+        &self,
+        history: &[ChatMessage],
+        analysis: &str,
+        context: Option<&str>,
+    ) -> anyhow::Result<crate::agent::model::ChatStream> {
+        let base = &self.config.decision_system_prompt;
+        let system = match context {
+            Some(ctx) => format!(
+                "{}\n\n--- Retrieved Context ---\n{}\n--- End Context ---\n\n\
+                 Use the retrieved context above to inform your answer when relevant.",
+                base, ctx
+            ),
+            None => base.clone(),
+        };
+
+        let last_user = history
+            .iter()
+            .rfind(|m| m.role == "user")
+            .map(|m| m.content.as_str())
+            .unwrap_or("");
+
+        let decision_messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: system,
+            },
+            ChatMessage {
+                role: "system".to_string(),
+                content: format!("[Internal analysis — do not quote this]\n{}", analysis),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: last_user.to_string(),
+            },
+        ];
+
+        self.client.decide_stream(&decision_messages, Some(256))
+    }
+
+    pub fn run_direct_stream(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<crate::agent::model::ChatStream> {
         let base = &self.config.decision_system_prompt;
         let system = match context {
             Some(ctx) => format!(
@@ -311,11 +297,10 @@ impl<'a> Agent<'a> {
             None => base.clone(),
         };
         let decision_messages = Self::replace_system(history, &system);
-        self.client.decide(&decision_messages, Some(256))
+        self.client.decide_stream(&decision_messages, Some(256))
     }
 
-    /// Returns a copy of `history` with the first `system` message replaced
-    /// by `new_system`. If no system message is present, prepends it.
+    /// Step 1 — send the full history to the reasoning model.
     fn replace_system(history: &[ChatMessage], new_system: &str) -> Vec<ChatMessage> {
         let mut out = history.to_vec();
         let new_msg = ChatMessage {

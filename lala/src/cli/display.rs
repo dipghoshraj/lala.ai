@@ -50,14 +50,31 @@ where
     result
 }
 
-/// Print a titled section with a coloured header and separator.
-pub fn print_section(header: &str, header_color: &str, text_color: &str, content: &str) {
+use anyhow::Result;
+
+/// Print a streaming section token-by-token.
+pub fn print_section_stream<I>(header: &str, header_color: &str, text_color: &str, mut stream: I) -> Result<String>
+where
+    I: Iterator<Item = Result<String>>,
+{
     let sep = "─".repeat(SECTION_WIDTH);
     println!("\n{}{} {}{}", header_color, "▷", header, RESET);
     println!("{}{}{}", header_color, sep, RESET);
-    println!("{}{}{}", text_color, content.trim(), RESET);
+    print!("{}", text_color);
+    io::stdout().flush().ok();
+
+    let mut result = String::new();
+    while let Some(chunk) = stream.next() {
+        let token = chunk?;
+        print!("{}", token);
+        io::stdout().flush().ok();
+        result.push_str(&token);
+    }
+
+    println!("{}", RESET);
     println!("{}{}{}", header_color, sep, RESET);
     println!();
+    Ok(result)
 }
 
 /// Print an informational message.
