@@ -59,12 +59,12 @@ impl  MemoryBlockRecord {
         Ok(())
     }
 
-    pub fn fetch_by_documents( query: &str, limit: i64) -> anyhow::Result<Vec<MemoryBlock>> {
+    pub fn fetch_by_documents(query: &str, project_id: &str, limit: i64) -> anyhow::Result<Vec<MemoryBlock>> {
         let db = crate::model::db();
         let mut client = db.client();
         let rows = client.query(
             crate::model::sql::SEARCH_MEMORY_BLOCKS,
-            &[&query, &limit],
+            &[&query, &limit, &project_id],
         )?;
         let memory_blocks = rows
             .into_iter()

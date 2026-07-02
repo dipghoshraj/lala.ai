@@ -41,12 +41,12 @@ impl DocumentChunk {
         Ok(())
     }
 
-    pub fn fetch_by_documents(query: &str, limit: i64) -> anyhow::Result<Vec<ChunkRow>> {
+    pub fn fetch_by_documents(query: &str, project_id: &str, limit: i64) -> anyhow::Result<Vec<ChunkRow>> {
         let db = crate::model::db();
         let mut client = db.client();
         let rows = client.query(
             crate::model::sql::SEARCH_CHUNKS,
-            &[&query, &limit],
+            &[&query, &limit, &project_id],
         )?;
         let chunks = rows
             .into_iter()

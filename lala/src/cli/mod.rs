@@ -2,6 +2,7 @@ mod chat;
 mod commands;
 mod display;
 mod ingest;
+mod project;
 
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;

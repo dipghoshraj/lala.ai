@@ -27,6 +27,7 @@ pub const SEARCH_CHUNKS: &str = "WITH query AS (SELECT websearch_to_tsquery('eng
  CROSS JOIN query
  WHERE query.tsq <> ''::tsquery
    AND c.fts_vector @@ query.tsq
+   AND d.project_id = $3
  ORDER BY score DESC, c.chunk_index ASC
  LIMIT $2";
 
@@ -59,6 +60,7 @@ pub const SEARCH_MEMORY_BLOCKS: &str =
  CROSS JOIN query
  WHERE query.tsq <> ''::tsquery
    AND c.fts_vector @@ query.tsq
+   AND d.project_id = $3
  ORDER BY ts_rank_cd(c.fts_vector, query.tsq) DESC, b.chunk_index ASC
  LIMIT $2";
 
@@ -77,4 +79,8 @@ pub const SEARCH_MEMORY_BLOCKS: &str =
 //  WHERE d.source = $1
 //  ORDER BY b.chunk_index ASC";
 
-pub const INSERT_PROJECT : &str = "INSERT INTO projects (id, name, description, created_at) VALUES ($1, $2, $3, $4)";
+pub const INSERT_PROJECT : &str = "INSERT INTO projects (id, name, description) VALUES ($1, $2, $3)";
+
+pub const SELECT_PROJECTS: &str = "SELECT id, name, description, created_at::text AS created_at FROM projects ORDER BY created_at DESC";
+pub const SELECT_PROJECT_BY_ID: &str = "SELECT id, name, description, created_at::text AS created_at FROM projects WHERE id = $1";
+pub const SELECT_PROJECT_BY_NAME: &str = "SELECT id, name, description, created_at::text AS created_at FROM projects WHERE name = $1 ORDER BY created_at DESC";

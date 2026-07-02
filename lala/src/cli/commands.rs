@@ -4,6 +4,7 @@ use rag::RagStore;
 
 use super::display;
 use super::ingest;
+use super::project;
 
 /// Dispatch a `/`-prefixed command. Returns `true` if it was handled.
 ///
@@ -32,6 +33,10 @@ pub fn dispatch(input: &str, store: &RagStore, client: &ApiClient) -> CommandRes
         }
         "/ingest-news" => {
             ingest::ingest_news(store, args);
+            CommandResult::Handled
+        }
+        "/project" => {
+            project::handle_project_command(store, args);
             CommandResult::Handled
         }
         "/search" => {
@@ -104,6 +109,11 @@ fn print_help() {
         display::RESET,
     );
     println!(
+        "  {}/project <cmd>{}        Manage project selection and creation",
+        display::BOLD_GREEN,
+        display::RESET,
+    );
+    println!(
         "  {}/status{}            Show database statistics",
         display::CYAN,
         display::RESET,
@@ -132,6 +142,12 @@ fn print_help() {
 fn search(store: &RagStore, query: &str) {
     if query.is_empty() {
         println!("Usage: /search <query>\n");
+        return;
+    }
+
+    if store.current_project_id().is_none() {
+        display::warn("No project selected. Use /project select <name-or-id> or /project create <name>.");
+        println!();
         return;
     }
 
@@ -179,6 +195,12 @@ fn search(store: &RagStore, query: &str) {
 fn memory_search(store: &RagStore, query: &str) {
     if query.is_empty() {
         println!("Usage: /memory-search <query>\n");
+        return;
+    }
+
+    if store.current_project_id().is_none() {
+        display::warn("No project selected. Use /project select <name-or-id> or /project create <name>.");
+        println!();
         return;
     }
 

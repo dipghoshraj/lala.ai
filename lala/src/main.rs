@@ -54,8 +54,7 @@ fn main() -> anyhow::Result<()> {
         rag::migrate::run_migrations(&mut client, &migrations_dir)?;
     }
 
-    let store = rag::RagStore{};
-
+    let store = rag::RagStore::new();
 
     cli::run(&api_url, smart_router, store, config)
 }
