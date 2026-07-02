@@ -23,8 +23,9 @@ impl RagStore {
         if chunks.is_empty() {
             return Ok(0);
         }
+        let project_id = "".to_string(); // Placeholder for project_id, adjust as needed
 
-        let doc = document::Document::new(title, source);
+        let doc = document::Document::new(title, source, project_id);
         doc.insert()?;
 
         for (i, chunk_text) in chunks.iter().enumerate() {
@@ -57,13 +58,12 @@ impl RagStore {
     /// Retrieve structured memory blocks for a full-text query.
     pub fn retrieve_memory_blocks(&self, query: &str, k: usize) -> Result<Vec<MemoryBlock>> {
         let k_i64 = k as i64;
-        let resuluts = memory::MemoryBlockRecord::fetch_by_documents(query, k_i64)?;
-        Ok(resuluts)
+        let results = memory::MemoryBlockRecord::fetch_by_documents(query, k_i64)?;
+        Ok(results)
     }
 
     /// Count of documents in the store.
     pub fn document_count(&self) -> Result<usize> {
-        
         let count = document::Document::count()?;
         Ok(count)
     }

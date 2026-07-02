@@ -8,15 +8,17 @@ pub struct Document {
     pub title: String,
     pub source: String,
     pub created_at: String,
+    pub project_id: String,
 }
 
 impl Document {
-    pub fn new(title: &str, source: &str) -> Self {
+    pub fn new(title: &str, source: &str, project_id: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             title: title.to_string(),
             source: source.to_string(),
             created_at: chrono_now(),
+            project_id,
         }
     }
 
@@ -37,7 +39,7 @@ impl Document {
         let mut client = db.client();
         client.execute(
             crate::model::sql::INSERT_DOCUMENT,
-            &[&self.id, &self.title, &self.source, &self.created_at],
+            &[&self.id, &self.title, &self.source, &self.created_at, &self.project_id],
         )?;
         Ok(())
     }

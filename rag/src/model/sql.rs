@@ -3,7 +3,7 @@
 
 pub const DOCUMENT_EXISTS: &str = "SELECT EXISTS(SELECT 1 FROM documents WHERE source = $1)";
 pub const INSERT_DOCUMENT: &str =
-    "INSERT INTO documents (id, title, source, created_at) VALUES ($1, $2, $3, $4)";
+    "INSERT INTO documents (id, title, source, created_at, project_id) VALUES ($1, $2, $3, $4, $5)";
 pub const INSERT_CHUNK: &str = "INSERT INTO chunks (chunk_id, document_id, chunk_index, chunk_text, char_count) VALUES ($1, $2, $3, $4, $5)";
 pub const INSERT_MEMORY_BLOCK: &str = "INSERT INTO memory_blocks (id, document_id, chunk_index, chunk_text, facts, capabilities, constraints, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
 // pub const UPSERT_CHUNK_EMBEDDING: &str =
