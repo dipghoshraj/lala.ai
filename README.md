@@ -23,8 +23,13 @@ PostgreSQL + pgvector is provisioned for RAG storage and is active in the curren
 
 It routes questions through `decision` only for fast replies, or through `reasoning` + `decision` for long-form multi-step answers.
 
-### ola CLI commands (enter `/help` in REPL for this list)
+### lala CLI commands (enter `/help` in REPL for this list)
 
+- `/project create --name <name> [--description <description>]` : create a new project and select it
+- `/project select <name-or-id>` : select an existing project
+- `/project deselect` : clear the selected project and use the LLM directly
+- `/project list` : list available projects
+- `/project current` : show the currently selected project
 - `/ingest [dir]`       : batch ingest text/docs from directory (default `./ingest/`)
 - `/ingest-file <path>` : ingest a single file
 - `/ingest-news <url>`  : ingest RSS articles

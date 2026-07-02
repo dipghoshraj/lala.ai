@@ -100,6 +100,7 @@ URL resolution priority: **CLI argument → `LLML_API_URL` env var → `http://l
 | `/ingest-news <rss_url>` | Fetch an RSS feed and ingest all articles |
 | `/search <query>` | BM25 full-text search over ingested documents (top 5 results) |
 | `/memory-search <query>` | BM25 search over structured memory blocks (facts / capabilities / constraints) |
+| `/project <cmd>` | Manage project selection and creation (required for ingest/search) |
 | `/status` | Show document count, chunk count, ingest directory |
 | `/help` | Show available commands |
 | `/clear` | Reset conversation history (keeps system prompt) |
@@ -109,6 +110,8 @@ URL resolution priority: **CLI argument → `LLML_API_URL` env var → `http://l
 Arrow-key history navigation (up/down) is provided by `rustyline`.
 
 ### Ingestion
+
+Before ingesting, create or select a project with `/project create --name <name>` or `/project select <name-or-id>`. Ingestion stores documents under the selected project, and search/memory search are scoped to that project.
 
 Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. Each file is read, chunked into 512-character overlapping windows (64-char overlap), and stored in PostgreSQL with FTS-enabled chunk indexing and auto-extracted memory blocks. Duplicate files (same source path) are skipped. Progress and a summary are displayed:
 
@@ -143,6 +146,8 @@ Fetch an RSS feed and automatically ingest all linked articles:
 Articles are fetched with a 1-second polite delay between requests. A CORS-proxy fallback is tried automatically on HTTP 403 responses. Each article is chunked and deduplicated by URL (source field).
 
 ### Search
+
+If no project is selected, `/search` and `/memory-search` will warn you to select a project first.
 
 ```
 >> /search layered architecture
