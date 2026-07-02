@@ -2,6 +2,7 @@ pub mod document;
 pub mod chunk;
 mod sql;
 pub mod memory;
+pub mod project;
 
 use std::sync::{Mutex, MutexGuard};
 use postgres::{Client, NoTls};

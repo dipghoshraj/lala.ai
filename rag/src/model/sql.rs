@@ -76,3 +76,5 @@ pub const SEARCH_MEMORY_BLOCKS: &str =
 //  JOIN documents d ON d.id = b.document_id
 //  WHERE d.source = $1
 //  ORDER BY b.chunk_index ASC";
+
+pub const INSERT_PROJECT : &str = "INSERT INTO projects (id, name, description, created_at) VALUES ($1, $2, $3, $4)";
