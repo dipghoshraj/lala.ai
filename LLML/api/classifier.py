@@ -90,6 +90,14 @@ CLASSIFIER_SYSTEM: str = (
     "DIRECT: the query is a greeting, simple factual question, or short conversational reply."
 )
 
+def classifier_prompt(query: str) -> str:
+    """
+    Build the system + user prompt for the LLM classifier.
+
+    The system prompt is a single, fixed string. The user prompt is the query
+    itself, which is passed through without any modification.
+    """
+    return f"{CLASSIFIER_SYSTEM}\n\nUser query:\n{query}"
 
 # ── Heuristic classifier ──────────────────────────────────────────────────────
 

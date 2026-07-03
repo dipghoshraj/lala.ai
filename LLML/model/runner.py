@@ -14,6 +14,7 @@ stream()    — a background daemon thread drives the sync llama_cpp streaming
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import os
 import threading
@@ -63,6 +64,18 @@ class ModelRunner:
         )
         self._params = params
         logger.info("model loaded successfully  path=%s", model_path)
+
+    def close(self) -> None:
+        """Release llama.cpp resources held by this runner."""
+        model = getattr(self, "_model", None)
+        if model is None:
+            return
+
+        close = getattr(model, "close", None)
+        if callable(close):
+            close()
+        self._model = None
+        gc.collect()
 
     # ── Properties ───────────────────────────────────────────────────────────
 
