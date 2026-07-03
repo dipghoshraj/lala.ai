@@ -17,11 +17,11 @@ PostgreSQL + pgvector is provisioned for RAG storage and is active in the curren
 ### What `lala.ai` does
 
 `lala.ai` is an agentic RAG system that combines:
-- `lala` (Rust CLI): local REPL with clever query routing (`direct` vs `reasoning`), document search, and ingestion workflow
-- `LLML` (Python FastAPI): GGUF model inference (`/v1/chat/completions`, `/v1/classify`, `/v1/models`)
+- `lala` (Rust CLI): local REPL with query routing (`direct` vs `reasoning`), document search, and ingestion workflow
+- `LLML` (Python FastAPI): GGUF model inference (`/v1/chat/completions`, `/v1/classify`, `/v1/embeddings`, `/v1/models`)
 - `telegram` bot (optional): same pipeline exposed via Telegram
 
-It routes questions through `decision` only for fast replies, or through `reasoning` + `decision` for long-form multi-step answers.
+It routes questions through a direct answer path for simple queries, or a reasoning + answer path for more complex queries.
 
 ### lala CLI commands (enter `/help` in REPL for this list)
 
@@ -214,8 +214,8 @@ flowchart TD
     Q(["incoming query"])
     Classify["POST /v1/classify"]
     Heuristic["heuristic fast-path\ngreetings → direct\nno LLM call"]
-    LLM["LLM classifier\nreasoning model"]
-    Direct["run_direct()\ndecision model only"]
+    LLM["LLM classifier"]
+    Direct["run_direct()\nfinal answer only"]
     Reason["run_reasoning()\nthen run_decision()"]
     Out(["reply to user"])
 
@@ -231,8 +231,8 @@ flowchart TD
 
 | Route | Path | Use case |
 |-------|------|----------|
-| `direct` | decision model only | Greetings, simple factual questions, short conversational replies |
-| `reasoning` | reasoning → decision | Analysis, code, comparisons, multi-step questions |
+| `direct` | final answer only | Greetings, simple factual questions, short conversational replies |
+| `reasoning` | reasoning + final answer | Analysis, code, comparisons, multi-step questions |
 
 **lala CLI:** enable LLM classification with `LALA_SMART_ROUTER=1`. Default uses the local heuristic (no extra network call).
 
