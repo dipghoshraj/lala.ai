@@ -27,7 +27,7 @@ impl Project {
         let mut client = db.client();
         client.execute(
             crate::model::sql::INSERT_PROJECT,
-            &[&self.id, &self.name, &self.description, &self.created_at],
+            &[&self.id, &self.name, &self.description],
         )?;
         Ok(())
     }

@@ -53,6 +53,8 @@ class ModelRegistry:
     ) -> AsyncIterator[tuple[str, ModelRunner] | None]:
         target = name or self._default_work_model
         model_cfg = self._work_models.get(target)
+        logger.info("requested work model: %s", target)
+        logger.info("available work models: %s", self._work_models.keys())
         if model_cfg is None:
             yield None
             return
@@ -72,6 +74,9 @@ class ModelRegistry:
         if target != self._embedding_model.name:
             yield None
             return
+
+        logger.info("requested embedding model: %s", target)
+        logger.info("available embedding model: %s", self._embedding_model.name if self._embedding_model else None)
 
         async with self._lock:
             yield target, await self._load(target, self._embedding_model)

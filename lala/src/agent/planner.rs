@@ -205,7 +205,7 @@ impl<'a> Agent<'a> {
             None => base.clone(),
         };
         let reasoning_history = Self::replace_system(history, &system);
-        self.client.reason_stream(&reasoning_history, Some(512))
+        self.client.chat_stream(&reasoning_history, Some(512), Some(0.0), None)
     }
 
     /// Ask the LLML server to classify the query via `POST /v1/classify`.
@@ -283,7 +283,7 @@ impl<'a> Agent<'a> {
             },
         ];
 
-        self.client.decide_stream(&decision_messages, Some(256))
+        self.client.chat_stream(&decision_messages, Some(256), None, None)
     }
 
     pub fn run_direct_stream(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<crate::agent::model::ChatStream> {
@@ -297,7 +297,7 @@ impl<'a> Agent<'a> {
             None => base.clone(),
         };
         let decision_messages = Self::replace_system(history, &system);
-        self.client.decide_stream(&decision_messages, Some(256))
+        self.client.chat_stream(&decision_messages, Some(256), None, None)
     }
 
     /// Step 1 — send the full history to the reasoning model.

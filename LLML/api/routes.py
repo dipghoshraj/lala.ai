@@ -113,6 +113,7 @@ def build_prompt(messages: list[ChatMessage]) -> str:
         elif msg.role == "assistant":
             result.append(f" {msg.content} </s>")
 
+    logger.info("built prompt: %s", result)
     return "".join(result)
 
 
@@ -193,6 +194,8 @@ def _unknown_work_model_response(registry, model: str | None) -> JSONResponse:
 
 
 def _is_unknown_work_model(registry, model: str | None) -> bool:
+    logger.info("checking if model is unknown: %r", model)
+    logger.info("available work models: %s", registry.work_model_names())
     return model is not None and model not in registry.work_model_names()
 
 
@@ -252,9 +255,9 @@ async def chat_completions(
         slid = slide_messages(req.messages, runner.n_ctx, max_tokens)
         prompt = build_prompt(slid)
         logger.info(
-            "chat completion request  model=%s  messages=%d  max_tokens=%d  stream=%s",
+            "chat completion request  model=%s  prompt=%s  max_tokens=%d  stream=%s",
             resolved_model,
-            len(req.messages),
+            prompt,
             max_tokens,
             req.stream,
         )

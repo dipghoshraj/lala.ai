@@ -10,12 +10,14 @@ pub struct ChatMessage {
 
 #[derive(Debug, Serialize)]
 struct ChatRequest<'a> {
-    /// The model role to invoke on the LLML server: "reasoning" | "decision".
+    /// Optional model name to invoke on the LLML server.
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
     messages: &'a [ChatMessage],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     stream: bool,
 }
 
@@ -149,22 +151,6 @@ impl RouteDecision {
     }
 }
 
-/// Logical model roles exposed by the LLML server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelRole {
-    Reasoning,
-    Decision,
-}
-
-impl ModelRole {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ModelRole::Reasoning => "reasoning",
-            ModelRole::Decision => "decision",
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 struct ClassifyRequest<'a> {
     query: &'a str,
@@ -199,15 +185,15 @@ impl ApiClient {
     }
 
     /// Create a streaming chat completion response.
-    pub fn chat_stream(
+    pub fn chat_stream<'a>(
         &self,
         messages: &[ChatMessage],
         max_tokens: Option<usize>,
-        model_role: Option<ModelRole>,
+        temperature: Option<f32>,
+        model: Option<&'a str>,
     ) -> anyhow::Result<ChatStream> {
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let role_str = model_role.map(|r| r.as_str());
-        let body = ChatRequest { model: role_str, messages, max_tokens, stream: true };
+        let body = ChatRequest { model, messages, max_tokens, temperature, stream: true };
 
         let resp = self
             .client
@@ -244,24 +230,6 @@ impl ApiClient {
         Ok(ChatStream {
             source: ChatStreamSource::Sse(reader.lines()),
         })
-    }
-
-    /// Convenience wrapper — uses the `reasoning` model with streaming.
-    pub fn reason_stream(
-        &self,
-        messages: &[ChatMessage],
-        max_tokens: Option<usize>,
-    ) -> anyhow::Result<ChatStream> {
-        self.chat_stream(messages, max_tokens, Some(ModelRole::Reasoning))
-    }
-
-    /// Convenience wrapper — uses the `decision` model with streaming.
-    pub fn decide_stream(
-        &self,
-        messages: &[ChatMessage],
-        max_tokens: Option<usize>,
-    ) -> anyhow::Result<ChatStream> {
-        self.chat_stream(messages, max_tokens, Some(ModelRole::Decision))
     }
 
     /// Call the LLML `/v1/classify` endpoint to get a routing decision.
