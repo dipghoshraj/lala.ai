@@ -365,6 +365,12 @@ async def classify_query(
     fast = heuristic_route(query)
     registry = request.app.state.registry
 
+    if fast == "direct":
+        logger.info("classify: heuristic direct fast-path, skipping work model load")
+        return JSONResponse(
+            ClassifyResponse(route="direct", confidence="heuristic").model_dump()
+        )
+
     async with registry.use_work(req.model) as resolved:
         if resolved is None:
             logger.warning("classify: unknown model %r, using heuristic", req.model)
