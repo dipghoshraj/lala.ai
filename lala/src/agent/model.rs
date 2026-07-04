@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, BufReader};
+use std::sync::Mutex;
 
 /// A single message in the OpenAI-style conversation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -34,6 +35,20 @@ struct AssistantMessage {
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    #[allow(dead_code)]
+    object: String,
+    data: Vec<ModelInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelInfo {
+    id: String,
+    #[allow(dead_code)]
+    object: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,6 +185,7 @@ struct ClassifyResponse {
 pub struct ApiClient {
     client: reqwest::blocking::Client,
     base_url: String,
+    selected_model: Mutex<Option<String>>,
 }
 
 impl ApiClient {
@@ -181,6 +197,44 @@ impl ApiClient {
                 .build()
                 .expect("failed to build HTTP client"),
             base_url: base_url.trim_end_matches('/').to_string(),
+            selected_model: Mutex::new(None),
+        }
+    }
+
+    pub fn selected_model(&self) -> Option<String> {
+        self.selected_model.lock().expect("selected_model mutex poisoned").clone()
+    }
+
+    pub fn set_selected_model(&self, model: Option<String>) {
+        let mut selected = self.selected_model.lock().expect("selected_model mutex poisoned");
+        *selected = model;
+    }
+
+    pub fn clear_selected_model(&self) {
+        self.set_selected_model(None);
+    }
+
+    pub fn list_models(&self) -> anyhow::Result<Vec<String>> {
+        let url = format!("{}/v1/models", self.base_url);
+        let resp: ModelsResponse = self
+            .client
+            .get(&url)
+            .header("Accept", "application/json")
+            .send()
+            .map_err(|e| anyhow::anyhow!("models request failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| anyhow::anyhow!("models server error: {e}"))?
+            .json()
+            .map_err(|e| anyhow::anyhow!("models invalid response: {e}"))?;
+
+        Ok(resp.data.into_iter().map(|model| model.id).collect())
+    }
+
+    fn resolve_model<'a>(&'a self, model: Option<&'a str>) -> Option<String> {
+        if let Some(m) = model {
+            Some(m.to_string())
+        } else {
+            self.selected_model()
         }
     }
 
@@ -193,7 +247,14 @@ impl ApiClient {
         model: Option<&'a str>,
     ) -> anyhow::Result<ChatStream> {
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let body = ChatRequest { model, messages, max_tokens, temperature, stream: true };
+        let selected_model = self.resolve_model(model);
+        let body = ChatRequest {
+            model: selected_model.as_deref(),
+            messages,
+            max_tokens,
+            temperature,
+            stream: true,
+        };
 
         let resp = self
             .client
