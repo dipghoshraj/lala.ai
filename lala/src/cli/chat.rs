@@ -2,6 +2,7 @@ use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
 use crate::agent::planner::{Agent, needs_reasoning, limit_chunks_by_tokens, limit_memory_by_tokens};
 use crate::config::LalaConfig;
 use rag::RagStore;
+use std::collections::HashMap;
 
 use super::display;
 
@@ -10,6 +11,9 @@ pub struct Chat<'a> {
     agent: Agent<'a>,
     smart_router: bool,
     history: Vec<ChatMessage>,
+    project_histories: HashMap<Option<String>, Vec<ChatMessage>>,
+    current_project_id: Option<String>,
+    system_prompt: String,
 }
 
 impl<'a> Chat<'a> {
@@ -30,15 +34,22 @@ impl<'a> Chat<'a> {
     }
 
     pub fn new(client: &'a ApiClient, smart_router: bool, store: &'a RagStore, config: LalaConfig) -> Self {
+        let current_project_id = store.current_project_id();
+        let system_prompt = config.system_prompt.clone();
         let history = vec![ChatMessage {
             role: "system".to_string(),
-            content: config.system_prompt.clone(),
+            content: system_prompt.clone(),
         }];
+        let mut project_histories = HashMap::new();
+        project_histories.insert(current_project_id.clone(), history.clone());
 
         Self {
             agent: Agent::new(client, store, config),
             smart_router,
             history,
+            project_histories,
+            current_project_id,
+            system_prompt,
         }
     }
 
@@ -51,6 +62,7 @@ impl<'a> Chat<'a> {
 
     /// Process a user message through the routing → inference pipeline.
     pub fn handle(&mut self, input: &str) {
+        self.sync_project_history();
         self.history.push(ChatMessage {
             role: "user".to_string(),
             content: input.to_string(),
@@ -74,6 +86,31 @@ impl<'a> Chat<'a> {
         } else {
             RouteDecision::Direct
         }
+    }
+
+    fn sync_project_history(&mut self) {
+        let active_project_id = self.agent.current_project_id();
+        if active_project_id == self.current_project_id {
+            return;
+        }
+
+        self.project_histories
+            .insert(self.current_project_id.clone(), self.history.clone());
+
+        self.history = self
+            .project_histories
+            .remove(&active_project_id)
+            .unwrap_or_else(|| vec![ChatMessage {
+                role: "system".to_string(),
+                content: self.system_prompt.clone(),
+            }]);
+
+        self.current_project_id = active_project_id;
+    }
+
+    fn preserve_current_history(&mut self) {
+        self.project_histories
+            .insert(self.current_project_id.clone(), self.history.clone());
     }
 
     fn run_direct(&mut self) {
@@ -112,6 +149,7 @@ impl<'a> Chat<'a> {
                         role: "assistant".to_string(),
                         content: reply,
                     });
+                    self.preserve_current_history();
                 }
                 Err(e) => {
                     display::error(&format!("Error streaming answer: {e}"));
@@ -178,6 +216,7 @@ impl<'a> Chat<'a> {
                                     role: "assistant".to_string(),
                                     content: reply,
                                 });
+                                self.preserve_current_history();
                             }
                             Err(e) => {
                                 display::error(&format!("Error streaming answer: {e}"));
