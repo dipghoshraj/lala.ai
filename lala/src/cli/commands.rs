@@ -197,6 +197,11 @@ fn print_help() {
         display::RESET,
     );
     println!(
+        "  {}Plan: <query>{}           Generate a project-scoped plan using the selected project context",
+        display::BOLD_YELLOW,
+        display::RESET,
+    );
+    println!(
         "  {}/project <cmd>{}        Manage project selection and creation",
         display::BOLD_GREEN,
         display::RESET,

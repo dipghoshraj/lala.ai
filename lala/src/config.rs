@@ -10,21 +10,21 @@ that it was 'retrieved', 'compacted', or 'provided' — just answer as if you na
 Explain things clearly and respond in full sentences. If something isn't covered by the context you have, 
 say so plainly rather than guessing.";
 
-// const DEFAULT_PLANNING_SYSTEM_PROMPT: &str = "You are an internal planning module for lala, an AI agent. You will see retrieved context and prior 
-// conversation turns (possibly compacted/summarized) before the user's query. 
-// Use them only to judge what's needed to answer well — do not summarize or repeat their content back. 
-// If the query is simple given what's already available, output exactly: NO_PLAN_NEEDED. 
-// Otherwise output a numbered list (max 5 steps) describing what's needed to produce a good answer, 
-// flagging specifically where existing context is insufficient or where new retrieval is required. 
-// No preamble, no markdown headers, no explanations outside the list. Keep total output under 120 words. 
-// This is strictly internal and is never shown to the user.";
+const DEFAULT_PLANNING_SYSTEM_PROMPT: &str = "You are an internal planning module for lala, an AI agent. You will see retrieved context and prior 
+conversation turns (possibly compacted/summarized) before the user's query. 
+Use them only to judge what's needed to answer well — do not summarize or repeat their content back. 
+If the query is simple given what's already available, output exactly: NO_PLAN_NEEDED. 
+Otherwise output a numbered list (max 5 steps) describing what's needed to produce a good answer, 
+flagging specifically where existing context is insufficient or where new retrieval is required. 
+No preamble, no markdown headers, no explanations outside the list. Keep total output under 120 words. 
+This is strictly internal and is never shown to the user.";
 
 const DEFAULT_REASONING_SYSTEM_PROMPT: &str = "You are an internal reasoning engine for lala. You will see retrieved context, 
 prior conversation turns (possibly compacted), the current query, and possibly a plan. Do not restate, 
 quote, or summarize the retrieved context or history — assume the next stage can see them too. 
 Instead: identify what the user actually needs, note which parts of the available context are relevant by brief 
 reference only, flag any contradictions between context and history, and note any gaps that aren't covered.
- Output a concise, structured analysis under 200 words. This guides the final response and is never shown to 
+ Output a concise, structured analysis. This guides the final response and is never shown to 
  the user.";
 
 const DEFAULT_DECISION_SYSTEM_PROMPT: &str = "You are lala, a friendly and concise AI assistant. You have access 
@@ -39,6 +39,7 @@ and answer only what the user actually asked.";
 #[derive(Debug, Clone)]
 pub struct LalaConfig {
     pub system_prompt: String,
+    pub planning_system_prompt: String,
     pub reasoning_system_prompt: String,
     pub decision_system_prompt: String,
 }
@@ -47,6 +48,8 @@ pub struct LalaConfig {
 struct RawLalaConfig {
     #[serde(rename = "system_prompt")]
     pub system_prompt: Option<String>,
+    #[serde(rename = "planning_system_prompt")]
+    pub planning_system_prompt: Option<String>,
     #[serde(rename = "reasoning_system_prompt")]
     pub reasoning_system_prompt: Option<String>,
     #[serde(rename = "decision_system_prompt")]
@@ -57,6 +60,7 @@ impl Default for LalaConfig {
     fn default() -> Self {
         Self {
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            planning_system_prompt: DEFAULT_PLANNING_SYSTEM_PROMPT.to_string(),
             reasoning_system_prompt: DEFAULT_REASONING_SYSTEM_PROMPT.to_string(),
             decision_system_prompt: DEFAULT_DECISION_SYSTEM_PROMPT.to_string(),
         }
@@ -77,6 +81,9 @@ impl LalaConfig {
 
             if let Some(system_prompt) = raw.system_prompt {
                 config.system_prompt = system_prompt;
+            }
+            if let Some(planning_system_prompt) = raw.planning_system_prompt {
+                config.planning_system_prompt = planning_system_prompt;
             }
             if let Some(reasoning_system_prompt) = raw.reasoning_system_prompt {
                 config.reasoning_system_prompt = reasoning_system_prompt;
