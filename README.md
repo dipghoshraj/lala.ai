@@ -35,6 +35,7 @@ It routes questions through a direct answer path for simple queries, or a reason
 - `/ingest-news <url>`  : ingest RSS articles
 - `/search <query>`     : search document memory with BM25
 - `/memory-search <query>` : search structured memory blocks
+- `Plan: <query>`        : generate a project-scoped plan using selected project context
 - `/status`             : show store stats (`documents`, `chunks`, `ingest dir`)
 - `/clear`              : reset conversation history
 - `/help`               : show commands

@@ -2,6 +2,7 @@ use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
 use crate::agent::planner::{Agent, needs_reasoning, limit_chunks_by_tokens, limit_memory_by_tokens};
 use crate::config::LalaConfig;
 use rag::RagStore;
+use std::collections::HashMap;
 
 use super::display;
 
@@ -10,6 +11,9 @@ pub struct Chat<'a> {
     agent: Agent<'a>,
     smart_router: bool,
     history: Vec<ChatMessage>,
+    project_histories: HashMap<Option<String>, Vec<ChatMessage>>,
+    current_project_id: Option<String>,
+    system_prompt: String,
 }
 
 impl<'a> Chat<'a> {
@@ -30,15 +34,22 @@ impl<'a> Chat<'a> {
     }
 
     pub fn new(client: &'a ApiClient, smart_router: bool, store: &'a RagStore, config: LalaConfig) -> Self {
+        let current_project_id = store.current_project_id();
+        let system_prompt = config.system_prompt.clone();
         let history = vec![ChatMessage {
             role: "system".to_string(),
-            content: config.system_prompt.clone(),
+            content: system_prompt.clone(),
         }];
+        let mut project_histories = HashMap::new();
+        project_histories.insert(current_project_id.clone(), history.clone());
 
         Self {
             agent: Agent::new(client, store, config),
             smart_router,
             history,
+            project_histories,
+            current_project_id,
+            system_prompt,
         }
     }
 
@@ -51,16 +62,49 @@ impl<'a> Chat<'a> {
 
     /// Process a user message through the routing → inference pipeline.
     pub fn handle(&mut self, input: &str) {
+        self.sync_project_history();
+
+        let is_plan = Self::strip_plan_prefix(input).is_some();
+        let user_content = if let Some(stripped) = Self::strip_plan_prefix(input) {
+            stripped.to_string()
+        } else {
+            input.to_string()
+        };
+
         self.history.push(ChatMessage {
             role: "user".to_string(),
-            content: input.to_string(),
+            content: user_content.clone(),
         });
+
+        if is_plan {
+            if self.current_project_id.is_none() {
+                display::error("Plan mode requires a selected project. Use /project select <name-or-id> first.");
+                self.history.pop();
+                return;
+            }
+            self.run_planning();
+            return;
+        }
 
         let route = self.classify(input);
 
         match route {
             RouteDecision::Direct => self.run_direct(),
             RouteDecision::Reasoning => self.run_reasoning(),
+        }
+    }
+
+    fn strip_plan_prefix(input: &str) -> Option<&str> {
+        let trimmed = input.trim_start();
+        if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("plan:") {
+            let remainder = trimmed[5..].trim_start();
+            if remainder.is_empty() {
+                None
+            } else {
+                Some(remainder)
+            }
+        } else {
+            None
         }
     }
 
@@ -74,6 +118,31 @@ impl<'a> Chat<'a> {
         } else {
             RouteDecision::Direct
         }
+    }
+
+    fn sync_project_history(&mut self) {
+        let active_project_id = self.agent.current_project_id();
+        if active_project_id == self.current_project_id {
+            return;
+        }
+
+        self.project_histories
+            .insert(self.current_project_id.clone(), self.history.clone());
+
+        self.history = self
+            .project_histories
+            .remove(&active_project_id)
+            .unwrap_or_else(|| vec![ChatMessage {
+                role: "system".to_string(),
+                content: self.system_prompt.clone(),
+            }]);
+
+        self.current_project_id = active_project_id;
+    }
+
+    fn preserve_current_history(&mut self) {
+        self.project_histories
+            .insert(self.current_project_id.clone(), self.history.clone());
     }
 
     fn run_direct(&mut self) {
@@ -112,6 +181,7 @@ impl<'a> Chat<'a> {
                         role: "assistant".to_string(),
                         content: reply,
                     });
+                    self.preserve_current_history();
                 }
                 Err(e) => {
                     display::error(&format!("Error streaming answer: {e}"));
@@ -178,6 +248,7 @@ impl<'a> Chat<'a> {
                                     role: "assistant".to_string(),
                                     content: reply,
                                 });
+                                self.preserve_current_history();
                             }
                             Err(e) => {
                                 display::error(&format!("Error streaming answer: {e}"));
@@ -185,6 +256,55 @@ impl<'a> Chat<'a> {
                             }
                         },
                     }
+                }
+            },
+        }
+    }
+
+    fn run_planning(&mut self) {
+        let input = match self.history.iter().rfind(|m| m.role == "user") {
+            Some(m) => m.content.clone(),
+            None => {
+                display::error("No user message found for planning.");
+                return;
+            }
+        };
+
+        let (context_str, limited_chunks, limited_memory) = self.retrieve_and_limit_context(&input);
+
+        if !limited_chunks.is_empty() {
+            display::print_sources(&limited_chunks);
+        }
+        if !limited_memory.is_empty() {
+            let sep = "─".repeat(display::SECTION_WIDTH);
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!("  {}Structured Memory Blocks:{}", display::BOLD_GREEN, display::RESET);
+            for block in &limited_memory {
+                println!("    {}- source:{} {} chunk #{}", display::CYAN, display::RESET, block.source, block.chunk_index);
+                println!("      {}FACTS:{} {}", display::CYAN, display::RESET, block.facts);
+                println!("      {}CAPABILITIES:{} {}", display::CYAN, display::RESET, block.capabilities);
+                println!("      {}CONSTRAINTS:{} {}", display::CYAN, display::RESET, block.constraints);
+            }
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+        }
+
+        let ctx_ref = context_str.as_deref();
+        match self.agent.run_planning_stream(&self.history, ctx_ref) {
+            Err(e) => {
+                display::error(&format!("Plan generation failed: {e}"));
+                self.history.pop();
+            }
+            Ok(stream) => match display::print_section_stream("Plan", display::BOLD_YELLOW, display::DIM_YELLOW, stream) {
+                Ok(plan_text) => {
+                    self.history.push(ChatMessage {
+                        role: "assistant".to_string(),
+                        content: plan_text,
+                    });
+                    self.preserve_current_history();
+                }
+                Err(e) => {
+                    display::error(&format!("Error streaming plan: {e}"));
+                    self.history.pop();
                 }
             },
         }

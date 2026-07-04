@@ -1,4 +1,5 @@
 mod chunker;
+mod migrations;
 pub mod migrate;
 mod store;
 mod types;

@@ -135,6 +135,10 @@ impl<'a> Agent<'a> {
         Self { client, store, config }
     }
 
+    pub fn current_project_id(&self) -> Option<String> {
+        self.store.current_project_id()
+    }
+
     /// Returns the context token budget used by the CLI for RAG context injection.
     /// Can be overridden via env var `LALA_CONTEXT_TOKEN_BUDGET`.
     pub fn context_token_budget() -> usize {
@@ -208,6 +212,20 @@ impl<'a> Agent<'a> {
         self.client.chat_stream(&reasoning_history, Some(512), Some(0.0), None)
     }
 
+    pub fn run_planning_stream(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<crate::agent::model::ChatStream> {
+        let base = &self.config.planning_system_prompt;
+        let system = match context {
+            Some(ctx) => format!(
+                "{}\n\n--- Retrieved Context ---\n{}\n--- End Context ---\n\n\
+                 Use the retrieved context above only to inform your planning output.",
+                base, ctx
+            ),
+            None => base.clone(),
+        };
+        let planning_history = Self::replace_system(history, &system);
+        self.client.chat_stream(&planning_history, Some(512), Some(0.0), None)
+    }
+
     /// Ask the LLML server to classify the query via `POST /v1/classify`.
     ///
     /// Passes the last two history turns as context so the server can handle
@@ -262,26 +280,14 @@ impl<'a> Agent<'a> {
             None => base.clone(),
         };
 
-        let last_user = history
-            .iter()
-            .rfind(|m| m.role == "user")
-            .map(|m| m.content.as_str())
-            .unwrap_or("");
-
-        let decision_messages = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: system,
-            },
+        let mut decision_messages = Self::replace_system(history, &system);
+        decision_messages.insert(
+            1,
             ChatMessage {
                 role: "system".to_string(),
                 content: format!("[Internal analysis — do not quote this]\n{}", analysis),
             },
-            ChatMessage {
-                role: "user".to_string(),
-                content: last_user.to_string(),
-            },
-        ];
+        );
 
         self.client.chat_stream(&decision_messages, Some(256), None, None)
     }

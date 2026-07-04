@@ -8,9 +8,6 @@ use rag;
 use figlet_rs::FIGfont;
 use colored::*;
 
-const DEFAULT_MIGRATIONS_DIR: &str = "./migrations";
-
-
 fn print_banner() {
     let standard_font = FIGfont::standard().unwrap();
     let figure = standard_font.convert("lala.ai");
@@ -49,9 +46,7 @@ fn main() -> anyhow::Result<()> {
 
     {
         let mut client = rag::model::db().client();
-        let migrations_dir = std::env::var("LALA_MIGRATIONS_DIR")
-            .unwrap_or_else(|_| DEFAULT_MIGRATIONS_DIR.to_string());
-        rag::migrate::run_migrations(&mut client, &migrations_dir)?;
+        rag::migrate::run_migrations(&mut client)?;
     }
 
     let store = rag::RagStore::new();

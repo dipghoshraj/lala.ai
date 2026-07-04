@@ -112,8 +112,6 @@ def build_prompt(messages: list[ChatMessage]) -> str:
                 result.append(f"[INST] {msg.content} [/INST]")
         elif msg.role == "assistant":
             result.append(f" {msg.content} </s>")
-
-    logger.info("built prompt: %s", result)
     return "".join(result)
 
 
@@ -226,6 +224,9 @@ async def chat_completions(
 
     if not req.messages:
         return JSONResponse({"error": "messages must not be empty"}, status_code=400)
+    
+    logger.info("chat request model=%s  messages=%s  max_tokens=%s  temperature=%s  stream=%s",
+        req.model, [m.dict() for m in req.messages], req.max_tokens, req.temperature, req.stream)
 
     response_id = f"chatcmpl-{uuid.uuid4()}"
     created = int(time.time())
@@ -254,13 +255,6 @@ async def chat_completions(
         temperature = req.temperature
         slid = slide_messages(req.messages, runner.n_ctx, max_tokens)
         prompt = build_prompt(slid)
-        logger.info(
-            "chat completion request  model=%s  prompt=%s  max_tokens=%d  stream=%s",
-            resolved_model,
-            prompt,
-            max_tokens,
-            req.stream,
-        )
         content = await runner.generate(prompt, max_tokens, temperature)
 
     return JSONResponse(
