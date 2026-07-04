@@ -90,6 +90,14 @@ CLASSIFIER_SYSTEM: str = (
     "DIRECT: the query is a greeting, simple factual question, or short conversational reply."
 )
 
+def classifier_prompt(query: str) -> str:
+    """
+    Build the system + user prompt for the LLM classifier.
+
+    The system prompt is a single, fixed string. The user prompt is the query
+    itself, which is passed through without any modification.
+    """
+    return f"{CLASSIFIER_SYSTEM}\n\nUser query:\n{query}"
 
 # ── Heuristic classifier ──────────────────────────────────────────────────────
 
@@ -109,25 +117,26 @@ def heuristic_route(query: str) -> str:
     5. Longer queries                               → ``"reasoning"``
     """
     lower = query.strip().lower()
+    reasoning_trigger = any(t in lower for t in REASONING_TRIGGERS)
 
     # 1 — social patterns: exact match or starts-with (e.g. "thanks a lot")
     for pat in DIRECT_PATTERNS:
-        if lower == pat or lower.startswith(pat + " "):
+        if (lower == pat or lower.startswith(pat + " ")) and not reasoning_trigger:
             return "direct"
 
     words = lower.split()
     word_count = len(words)
 
     # 2 — very short, no trigger
-    if word_count <= 3 and not any(t in lower for t in REASONING_TRIGGERS):
+    if word_count <= 3 and not reasoning_trigger:
         return "direct"
 
     # 3 — explicit reasoning trigger present
-    if any(t in lower for t in REASONING_TRIGGERS):
+    if reasoning_trigger:
         return "reasoning"
 
     # 4 — medium length, no trigger
-    if word_count <= 8:
+    if word_count <= 8 and not reasoning_trigger:
         return "direct"
 
     # 5 — default for longer queries

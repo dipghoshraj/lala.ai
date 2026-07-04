@@ -29,8 +29,8 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 
-from config import load_config, params_from_config
-from model import ModelRegistry, ModelRunner
+from config import load_config
+from model import ModelRegistry
 from api.routes import router
 from api.vector_routes import vector_router
 from vector.store import VectorStore
@@ -44,18 +44,18 @@ logger = logging.getLogger(__name__)
 
 
 def build_app(config_path: str | Path) -> FastAPI:
-    """Load config, instantiate models, wire FastAPI application."""
+    """Load config, register model definitions, wire FastAPI application."""
     config = load_config(config_path)
-    registry = ModelRegistry()
+    registry = ModelRegistry(
+        work_models=config.work_models,
+        default_work_model=config.default_work_model,
+        embedding_model=config.embedding_model,
+    )
 
-    for model_cfg in config.models:
-        role = model_cfg.role or model_cfg.name
-        params = params_from_config(model_cfg.parameters)
-        logger.info("loading model  role=%s  path=%s", role, model_cfg.model_path)
-        runner = ModelRunner(model_cfg.model_path, params)
-        registry.register(role, runner)
-
-    logger.info("registered roles: %s", ", ".join(registry.roles()))
+    logger.info("configured work models: %s", ", ".join(registry.work_model_names()))
+    logger.info("default work model: %s", registry.default_work_model)
+    if registry.embedding_model_name():
+        logger.info("configured embedding model: %s", registry.embedding_model_name())
 
     # ── Vector store (ChromaDB) ───────────────────────────────────────────────
     chroma_cfg: dict = config.chroma if hasattr(config, "chroma") and config.chroma else {}
@@ -66,9 +66,25 @@ def build_app(config_path: str | Path) -> FastAPI:
         vector_store = None
 
     app = FastAPI(
-        title="LLML-py",
-        description="Local LLM inference server — Python/FastAPI port of LLML (Rust/Axum)",
+        title="LLML API",
+        description=(
+            "Local inference API for work and embedding models. "
+            "Open the Swagger UI at /docs for request/response testing."
+        ),
         version="0.1.0",
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        openapi_tags=[
+            {
+                "name": "llm",
+                "description": "Chat completions, classifications, embeddings, and model listing.",
+            },
+            {
+                "name": "vector",
+                "description": "Vector store operations backed by ChromaDB.",
+            },
+        ],
     )
     app.state.registry = registry
     app.state.vector_store = vector_store

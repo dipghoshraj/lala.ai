@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, BufReader};
+use std::sync::Mutex;
 
 /// A single message in the OpenAI-style conversation.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -10,12 +11,14 @@ pub struct ChatMessage {
 
 #[derive(Debug, Serialize)]
 struct ChatRequest<'a> {
-    /// The model role to invoke on the LLML server: "reasoning" | "decision".
+    /// Optional model name to invoke on the LLML server.
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
     messages: &'a [ChatMessage],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     stream: bool,
 }
 
@@ -32,6 +35,20 @@ struct AssistantMessage {
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    #[allow(dead_code)]
+    object: String,
+    data: Vec<ModelInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelInfo {
+    id: String,
+    #[allow(dead_code)]
+    object: String, // type: ignore
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,22 +166,6 @@ impl RouteDecision {
     }
 }
 
-/// Logical model roles exposed by the LLML server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelRole {
-    Reasoning,
-    Decision,
-}
-
-impl ModelRole {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ModelRole::Reasoning => "reasoning",
-            ModelRole::Decision => "decision",
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 struct ClassifyRequest<'a> {
     query: &'a str,
@@ -184,6 +185,7 @@ struct ClassifyResponse {
 pub struct ApiClient {
     client: reqwest::blocking::Client,
     base_url: String,
+    selected_model: Mutex<Option<String>>,
 }
 
 impl ApiClient {
@@ -195,19 +197,64 @@ impl ApiClient {
                 .build()
                 .expect("failed to build HTTP client"),
             base_url: base_url.trim_end_matches('/').to_string(),
+            selected_model: Mutex::new(None),
+        }
+    }
+
+    pub fn selected_model(&self) -> Option<String> {
+        self.selected_model.lock().expect("selected_model mutex poisoned").clone()
+    }
+
+    pub fn set_selected_model(&self, model: Option<String>) {
+        let mut selected = self.selected_model.lock().expect("selected_model mutex poisoned");
+        *selected = model;
+    }
+
+    pub fn clear_selected_model(&self) {
+        self.set_selected_model(None);
+    }
+
+    pub fn list_models(&self) -> anyhow::Result<Vec<String>> {
+        let url = format!("{}/v1/models", self.base_url);
+        let resp: ModelsResponse = self
+            .client
+            .get(&url)
+            .header("Accept", "application/json")
+            .send()
+            .map_err(|e| anyhow::anyhow!("models request failed: {e}"))?
+            .error_for_status()
+            .map_err(|e| anyhow::anyhow!("models server error: {e}"))?
+            .json()
+            .map_err(|e| anyhow::anyhow!("models invalid response: {e}"))?;
+
+        Ok(resp.data.into_iter().map(|model| model.id).collect())
+    }
+
+    fn resolve_model<'a>(&'a self, model: Option<&'a str>) -> Option<String> {
+        if let Some(m) = model {
+            Some(m.to_string())
+        } else {
+            self.selected_model()
         }
     }
 
     /// Create a streaming chat completion response.
-    pub fn chat_stream(
+    pub fn chat_stream<'a>(
         &self,
         messages: &[ChatMessage],
         max_tokens: Option<usize>,
-        model_role: Option<ModelRole>,
+        temperature: Option<f32>,
+        model: Option<&'a str>,
     ) -> anyhow::Result<ChatStream> {
         let url = format!("{}/v1/chat/completions", self.base_url);
-        let role_str = model_role.map(|r| r.as_str());
-        let body = ChatRequest { model: role_str, messages, max_tokens, stream: true };
+        let selected_model = self.resolve_model(model);
+        let body = ChatRequest {
+            model: selected_model.as_deref(),
+            messages,
+            max_tokens,
+            temperature,
+            stream: true,
+        };
 
         let resp = self
             .client
@@ -244,24 +291,6 @@ impl ApiClient {
         Ok(ChatStream {
             source: ChatStreamSource::Sse(reader.lines()),
         })
-    }
-
-    /// Convenience wrapper — uses the `reasoning` model with streaming.
-    pub fn reason_stream(
-        &self,
-        messages: &[ChatMessage],
-        max_tokens: Option<usize>,
-    ) -> anyhow::Result<ChatStream> {
-        self.chat_stream(messages, max_tokens, Some(ModelRole::Reasoning))
-    }
-
-    /// Convenience wrapper — uses the `decision` model with streaming.
-    pub fn decide_stream(
-        &self,
-        messages: &[ChatMessage],
-        max_tokens: Option<usize>,
-    ) -> anyhow::Result<ChatStream> {
-        self.chat_stream(messages, max_tokens, Some(ModelRole::Decision))
     }
 
     /// Call the LLML `/v1/classify` endpoint to get a routing decision.

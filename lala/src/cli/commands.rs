@@ -39,6 +39,10 @@ pub fn dispatch(input: &str, store: &RagStore, client: &ApiClient) -> CommandRes
             project::handle_project_command(store, args);
             CommandResult::Handled
         }
+        "/model" => {
+            model_command(args, client);
+            CommandResult::Handled
+        }
         "/search" => {
             search(store, args);
             CommandResult::Handled
@@ -49,6 +53,90 @@ pub fn dispatch(input: &str, store: &RagStore, client: &ApiClient) -> CommandRes
         }
         _ => CommandResult::NotACommand,
     }
+}
+
+fn model_command(args: &str, client: &ApiClient) {
+    let (subcmd, rest) = split_command(args);
+    match subcmd {
+        "" | "help" => print_model_help(),
+        "list" => list_models(client),
+        "select" => select_model(rest, client),
+        "current" => show_selected_model(client),
+        "clear" => clear_selected_model(client),
+        _ => {
+            display::warn(&format!("Unknown model command: {}", args));
+            println!("Usage: /model <list|select|current|clear>");
+        }
+    }
+}
+
+fn print_model_help() {
+    println!();
+    println!("  /model list{}      List available models from the LLML server{}", display::BOLD_GREEN, display::RESET);
+    println!("  /model select <id>{}  Select a model to use for all subsequent chat requests{}", display::BOLD_GREEN, display::RESET);
+    println!("  /model current{}   Show the currently selected model{}", display::BOLD_GREEN, display::RESET);
+    println!("  /model clear{}     Clear the selected model and use the server default{}", display::BOLD_GREEN, display::RESET);
+    println!();
+}
+
+fn list_models(client: &ApiClient) {
+    match client.list_models() {
+        Ok(models) => {
+            println!();
+            let sep = "─".repeat(display::SECTION_WIDTH);
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!("  {}Available Models:{}", display::BOLD, display::RESET);
+            for model in models {
+                println!("    {}- {}{}", display::CYAN, model, display::RESET);
+            }
+            println!("{}{}{}", display::DIM, sep, display::RESET);
+            println!();
+        }
+        Err(e) => {
+            display::error(&format!("Failed to list models: {e}"));
+            println!();
+        }
+    }
+}
+
+fn select_model(args: &str, client: &ApiClient) {
+    let model_id = args.trim();
+    if model_id.is_empty() {
+        display::error("Usage: /model select <model-id>");
+        println!();
+        return;
+    }
+
+    match client.list_models() {
+        Ok(models) => {
+            if models.contains(&model_id.to_string()) {
+                client.set_selected_model(Some(model_id.to_string()));
+                display::success(&format!("Selected model: {}", model_id));
+            } else {
+                display::warn(&format!("Model '{}' is not available on the server.", model_id));
+                println!("Use /model list to see available models.");
+            }
+        }
+        Err(e) => {
+            display::error(&format!("Failed to verify model list: {e}"));
+        }
+    }
+    println!();
+}
+
+fn show_selected_model(client: &ApiClient) {
+    println!();
+    match client.selected_model() {
+        Some(model) => println!("Selected model: {}", model),
+        None => println!("No model selected. The server default will be used."),
+    }
+    println!();
+}
+
+fn clear_selected_model(client: &ApiClient) {
+    client.clear_selected_model();
+    display::success("Selected model cleared. Server default model will be used.");
+    println!();
 }
 
 /// Result of command dispatch.
@@ -110,6 +198,11 @@ fn print_help() {
     );
     println!(
         "  {}/project <cmd>{}        Manage project selection and creation",
+        display::BOLD_GREEN,
+        display::RESET,
+    );
+    println!(
+        "  {}/model <cmd>{}          List and select LLML models",
         display::BOLD_GREEN,
         display::RESET,
     );

@@ -17,11 +17,11 @@ PostgreSQL + pgvector is provisioned for RAG storage and is active in the curren
 ### What `lala.ai` does
 
 `lala.ai` is an agentic RAG system that combines:
-- `lala` (Rust CLI): local REPL with clever query routing (`direct` vs `reasoning`), document search, and ingestion workflow
-- `LLML` (Python FastAPI): GGUF model inference (`/v1/chat/completions`, `/v1/classify`, `/v1/models`)
+- `lala` (Rust CLI): local REPL with query routing (`direct` vs `reasoning`), document search, and ingestion workflow
+- `LLML` (Python FastAPI): GGUF model inference (`/v1/chat/completions`, `/v1/classify`, `/v1/embeddings`, `/v1/models`)
 - `telegram` bot (optional): same pipeline exposed via Telegram
 
-It routes questions through `decision` only for fast replies, or through `reasoning` + `decision` for long-form multi-step answers.
+It routes questions through a direct answer path for simple queries, or a reasoning + answer path for more complex queries.
 
 ### lala CLI commands (enter `/help` in REPL for this list)
 
@@ -214,8 +214,8 @@ flowchart TD
     Q(["incoming query"])
     Classify["POST /v1/classify"]
     Heuristic["heuristic fast-path\ngreetings → direct\nno LLM call"]
-    LLM["LLM classifier\nreasoning model"]
-    Direct["run_direct()\ndecision model only"]
+    LLM["LLM classifier"]
+    Direct["run_direct()\nfinal answer only"]
     Reason["run_reasoning()\nthen run_decision()"]
     Out(["reply to user"])
 
@@ -231,8 +231,8 @@ flowchart TD
 
 | Route | Path | Use case |
 |-------|------|----------|
-| `direct` | decision model only | Greetings, simple factual questions, short conversational replies |
-| `reasoning` | reasoning → decision | Analysis, code, comparisons, multi-step questions |
+| `direct` | final answer only | Greetings, simple factual questions, short conversational replies |
+| `reasoning` | reasoning + final answer | Analysis, code, comparisons, multi-step questions |
 
 **lala CLI:** enable LLM classification with `LALA_SMART_ROUTER=1`. Default uses the local heuristic (no extra network call).
 
@@ -242,13 +242,21 @@ flowchart TD
 
 ## API Reference
 
-All endpoints served by LLML on port `3000`.
+All endpoints are served by LLML on port `3000`.
+
+### Swagger UI
+
+Open the live API docs at `http://localhost:3000/docs`.
+
+- `Swagger UI` lets you try the JSON endpoints directly.
+- `Redoc` is available at `http://localhost:3000/redoc`.
+- Streaming chat responses use SSE, so the `curl` example below is the most reliable way to test `stream: true`.
 
 ### `POST /v1/chat/completions`
 
 ```json
 {
-  "model": "reasoning",
+  "model": "mistral-work",
   "messages": [{ "role": "user", "content": "Explain Rust lifetimes." }],
   "max_tokens": 512,
   "temperature": 0.7,
@@ -259,12 +267,24 @@ All endpoints served by LLML on port `3000`.
 | Field | Required | Notes |
 |-------|----------|-------|
 | `messages` | yes | Non-empty. First element may be `system`. |
-| `model` | no | `"reasoning"` or `"decision"`. Omit → first registered model. |
+| `model` | no | Name from `work_models` in `ai-config.yaml`. Omit it to use `default_work_model`. |
 | `max_tokens` | no | Overrides config default for this request. |
 | `temperature` | no | Overrides model config default (0.0–2.0). |
-| `stream` | no | `true` → SSE token stream. Default `false`. |
+| `stream` | no | `true` returns `text/event-stream` SSE chunks. Default `false`. |
 
-Response: OpenAI `ChatResponse` — `choices[0].message.content`.
+Non-streaming response: OpenAI-style `ChatResponse`.
+
+Streaming response:
+
+```bash
+curl -N http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mistral-work",
+    "messages": [{ "role": "user", "content": "Explain Rust lifetimes." }],
+    "stream": true
+  }'
+```
 
 ### `POST /v1/classify`
 
@@ -283,51 +303,63 @@ Response:
 { "route": "reasoning", "confidence": "llm" }
 ```
 
-`confidence` is `"heuristic"` when the fast-path fired (social patterns, no LLM call), `"llm"` when the reasoning model classified the query.
+`confidence` is `"heuristic"` when the fast-path fired, and `"llm"` when the selected work model classified the query.
+
+### `POST /v1/embeddings`
+
+```json
+{
+  "model": "embedding",
+  "input": ["hello world", "another chunk"]
+}
+```
+
+If `model` is omitted, LLML uses the configured embedding model.
 
 ### `GET /v1/models`
 
 ```json
-{ "object": "list", "data": [{ "id": "reasoning" }, { "id": "decision" }] }
+{ "object": "list", "data": [{ "id": "mistral-work" }, { "id": "deepseek-work" }, { "id": "embedding" }] }
 ```
 
 ---
 
 ## Configuration — `ai-config.yaml`
 
-Read by LLML only. Defines model roles, GGUF paths, and inference parameters.
+Read by LLML only. Defines the default work model, the available work models, and the embedding model.
 
 ```yaml
-models:
-  - name: mistral-reasoning
-    role: reasoning
-    modelPath: /path/to/mistral-7b-v0.1.Q4_K_M.gguf
-    parameters:
-      - { name: temperature,  default: 0.7  }
-      - { name: max_tokens,   default: 512  }
-      - { name: n_ctx,        default: 2048 }
-      - { name: n_gpu_layers, default: 0    }
-      - { name: n_threads,    default: 4    }
-      - { name: n_batch,      default: 512  }
+version: 1
+default_work_model: mistral-work
 
-  - name: mistral-decision
-    role: decision
-    modelPath: /path/to/mistral-7b-v0.1.Q4_K_M.gguf
-    parameters:
-      - { name: temperature,  default: 0.3 }
-      - { name: max_tokens,   default: 256 }
-      - { name: n_ctx,        default: 512 }
-      - { name: n_gpu_layers, default: 0   }
-      - { name: n_threads,    default: 4   }
-      - { name: n_batch,      default: 512 }
+work_models:
+  - name: mistral-work
+    model_path: /path/to/qwen2.5-3b-instruct-q4_k_m.gguf
+    params:
+      temperature: 0.7
+      max_tokens: 2048
+      n_gpu_layers: 0
+      n_threads: 0
+      n_threads_batch: 0
+      n_ctx: 8000
+      n_batch: 512
+      use_mlock: true
+
+embedding_model:
+  name: embedding
+  model_path: /path/to/bge-small-en-v1.5-q4_k_m.gguf
+  params:
+    n_ctx: 1024
+    n_batch: 512
+    use_mlock: true
+    embedding: true
 ```
 
-| Parameter | Notes |
-|-----------|-------|
-| `role` | API key used by clients (`"reasoning"` / `"decision"`) |
-| `n_gpu_layers` | `0` = CPU-only; `99` = all layers to GPU (needs CUDA/Metal build) |
-| `n_threads` | Set to physical core count; `0` = auto-detect |
-| `modelPath` | Absolute path to `.gguf` file — both roles can share the same file |
+Notes:
+- `default_work_model` is the fallback when the request omits `model`.
+- LLML loads one work model at a time. If the next request names a different model, LLML unloads the current one before loading the new one.
+- The embedding model is loaded only for embedding requests.
+- The old `reasoning` and `decision` role split is gone from the LLML config.
 
 ---
 
@@ -415,12 +447,13 @@ models:
 
 ### Configuration scope
 - `ai-config.yaml` is LLML's concern only — `lala` CLI never reads it
-- Clients select models by **role string** via the API: `"reasoning"` and `"decision"`
-- Role strings must match keys registered in `ModelRegistry`
+- Clients select chat models by **model name** via the API, and LLML falls back to `default_work_model` when `model` is omitted
+- The embedding model is separate and is used only for `/v1/embeddings`
 
-### Role strings (fixed)
-- `"reasoning"` — multi-step analysis, code review, comparisons
-- `"decision"` — fast replies, social/API patterns, conversational replies
+### Model selection
+- `mistral-work` — default chat model in the sample config
+- `deepseek-work` — alternate chat model in the sample config
+- `embedding` — embedding model in the sample config
 
 ### RAG
 - Standalone `rag/` library crate with zero dependencies on `lala`, agent, or model layers

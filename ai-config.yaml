@@ -1,149 +1,51 @@
 version: 1
 
-# CLI system prompt configuration. If absent, defaults are used.
-system_prompt: "You are a friendly AI assistant named lala. Explain things clearly and naturally. Respond in full sentences."
-reasoning_system_prompt: "You are an internal reasoning engine. Analyse the user's query carefully. Think step by step: what is the user asking, what context matters, and what would make the best answer. Output your analysis concisely — this will be used to guide the final response, not shown to the user."
-decision_system_prompt: "You are lala, a friendly and concise AI assistant. You have been given an internal analysis to guide you. Use it to inform your answer but do NOT repeat or quote it. Respond directly to the user in clear, natural language."
+# Default work model used when a request does not include "model".
+default_work_model: "mistral-work"
 
-# ChromaDB vector store configuration
-# mode: "embedded" — no server needed, data stored at `path` (recommended for local dev)
-# mode: "server"   — connect to a running ChromaDB HTTP server (e.g. docker-compose)
+# Vector store configuration.
 chroma:
-  mode: embedded          # embedded | server
-  path: ./chroma_db       # used when mode=embedded
-  host: localhost         # used when mode=server
-  port: 8000              # used when mode=server
+  mode: embedded
+  path: ./chroma_db
+  host: localhost
+  port: 8000
   collection_name: lala_vectors
 
-Modeltypes:
-  types: ["Reasoning", "Decision", "Text Generation"]
+# Chat/classification models. These are loaded on demand, one at a time.
+work_models:
+  - name: "mistral-work"
+    model_path: "/models/qwen2.5-3b-instruct-q4_k_m.gguf"
+    params:
+      temperature: 0.7
+      max_tokens: 2048
+      n_gpu_layers: 0
+      n_threads: 0
+      n_threads_batch: 0
+      n_ctx: 8000
+      n_batch: 512
+      use_mlock: 1
 
-Models:
-  - name: "mistral-reasoning"
-    description: "A large language model for deep reasoning, analysis, and multi-step thinking."
-    type: "Reasoning"
-    role: "reasoning"
-    parameters:
-      - name: "temperature"
-        description: "Controls the randomness of the output. Higher = more creative."
-        type: "float"
-        default: 0.7
-      - name: "max_tokens"
-        description: "The maximum number of tokens to generate."
-        type: "integer"
-        default: 2048
-      - name: "n_gpu_layers"
-        description: "Number of model layers to offload to GPU. Set to 99 to offload all layers (requires CUDA/Metal build). Set to 0 for CPU-only."
-        type: "integer"
-        default: 0
-      - name: "n_threads"
-        description: "CPU threads for token generation (autoregressive decode). Set to physical core count. 0 = auto-detect."
-        type: "integer"
-        default: 0
-      - name: "n_threads_batch"
-        description: "CPU threads for prompt evaluation (prefill). Can be higher than n_threads. 0 = use all available cores."
-        type: "integer"
-        default: 0
-      - name: "n_ctx"
-        description: "Context window size in tokens. Use 2048+ for long reasoning chains."
-        type: "integer"
-        default: 4096
-      - name: "n_batch"
-        description: "Batch size for prompt evaluation. Larger = faster prompt processing."
-        type: "integer"
-        default: 512
-      - name: "use_mlock"
-        description: "Pin model weights in RAM (prevents OS from swapping them out during inference). 1 = enabled."
-        type: "integer"
-        default: 1
-      - name: "embedding"
-        description: "Whether to generate embeddings instead of text. 1 = enabled."
-        type: "integer"
-        default: 0
-    modelPath: "/models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+  - name: "deepseek-work"
+    model_path: "/models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+    params:
+      temperature: 0.7
+      max_tokens: 2048
+      n_gpu_layers: 0
+      n_threads: 0
+      n_threads_batch: 0
+      n_ctx: 4096
+      n_batch: 512
+      use_mlock: 1
 
-  - name: "mistral-decision"
-    description: "A model optimised for concise, deterministic decision-making and action selection."
-    type: "Decision"
-    role: "decision"
-    parameters:
-      - name: "temperature"
-        description: "Lower temperature for more deterministic, decisive outputs."
-        type: "float"
-        default: 0.3
-      - name: "max_tokens"
-        description: "The maximum number of tokens to generate. Decisions are short."
-        type: "integer"
-        default: 2048
-      - name: "n_gpu_layers"
-        description: "Number of model layers to offload to GPU. 0 = CPU-only."
-        type: "integer"
-        default: 0
-      - name: "n_threads"
-        description: "CPU threads for token generation. 0 = auto-detect."
-        type: "integer"
-        default: 0
-      - name: "n_threads_batch"
-        description: "CPU threads for prompt evaluation. 0 = use all available cores."
-        type: "integer"
-        default: 0
-      - name: "n_ctx"
-        description: "Context window size in tokens. Kept smaller for faster KV cache allocation."
-        type: "integer"
-        default: 8000
-      - name: "n_batch"
-        description: "Batch size for prompt evaluation."
-        type: "integer"
-        default: 512
-      - name: "use_mlock"
-        description: "Pin model weights in RAM. 1 = enabled."
-        type: "integer"
-        default: 1
-      - name: "embedding"
-        description: "Whether to generate embeddings instead of text. 1 = enabled."
-        type: "integer"
-        default: 0
-    modelPath: "/models/qwen2.5-3b-instruct-q4_k_m.gguf"
-
-  - name: "embedding"
-    description: "A model for generating vector embeddings from text, used for semantic search and retrieval."
-    type: "Embedding"
-    role: "embedding"
-    parameters:
-      - name: "temperature"
-        description: "Higher temperature for more creative, diverse outputs."
-        type: "float"
-        default: 0.9
-      - name: "max_tokens"
-        description: "The maximum number of tokens to generate."
-        type: "integer"
-        default: 512
-      - name: "n_gpu_layers"
-        description: "Number of model layers to offload to GPU. 0 = CPU-only."
-        type: "integer"
-        default: 0
-      - name: "n_threads"
-        description: "CPU threads for token generation. 0 = auto-detect."
-        type: "integer"
-        default: 0
-      - name: "n_threads_batch"
-        description: "CPU threads for prompt evaluation. 0 = use all available cores."
-        type: "integer"
-        default: 0
-      - name: "n_ctx"
-        description: "Context window size in tokens."
-        type: "integer"
-        default: 1024
-      - name: "n_batch"
-        description: "Batch size for prompt evaluation."
-        type: "integer"
-        default: 512
-      - name: "use_mlock"
-        description: "Pin model weights in RAM. 1 = enabled."
-        type: "integer"
-        default: 1
-      - name: "embedding"
-        description: "Whether to generate embeddings instead of text. 1 = enabled."
-        type: "integer"
-        default: 1
-    modelPath: "/models/bge-small-en-v1.5-q4_k_m.gguf"
+# Embedding model. Loaded only for embedding requests.
+embedding_model:
+  name: "bge-embedding"
+  model_path: "/models/bge-small-en-v1.5-q4_k_m.gguf"
+  params:
+    n_gpu_layers: 0
+    n_threads: 0
+    n_threads_batch: 0
+    n_ctx: 1024
+    n_batch: 512
+    use_mlock: 1
+    embedding: true

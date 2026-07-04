@@ -1,6 +1,6 @@
 # lala.ai — System Architecture
 
-> **Current state:** Phase 0 complete — five-layer architecture (Interface → Agent → RAG → Model + DB). `lala` Rust CLI + `LLML` Python inference server + `telegram` Python bot connected over HTTP. RAG retrieval is **live** on every query via PostgreSQL FTS (`tsvector` + GIN) + pgvector (`vector(384)` IVFFlat) + memory blocks. LLML serves OpenAI-compatible API with two model roles (`reasoning` / `decision`) and query-classification endpoint (`/v1/classify`).
+> **Current state:** Phase 0 complete — five-layer architecture (Interface → Agent → RAG → Model + DB). `lala` Rust CLI + `LLML` Python inference server + `telegram` Python bot connected over HTTP. RAG retrieval is **live** on every query via PostgreSQL FTS (`tsvector` + GIN) + pgvector (`vector(384)` IVFFlat) + memory blocks. LLML serves an OpenAI-compatible API with configurable work models and a query-classification endpoint (`/v1/classify`).
 
 ---
 
@@ -43,7 +43,7 @@ lala.ai/
 │   ├── requirements.txt
 │   ├── model/
 │   │   ├── runner.py       # ModelRunner — generate() + stream() via asyncio.to_thread
-│   │   └── registry.py     # ModelRegistry: role (str) → ModelRunner
+│   │   └── registry.py     # ModelRegistry: model name (str) → ModelRunner
 │   └── api/
 │       ├── routes.py       # Router: /v1/chat/completions, /v1/models, /v1/classify
 │       └── classifier.py   # Shared heuristic + CLASSIFIER_SYSTEM prompt constant
@@ -70,10 +70,10 @@ graph TD
     Lala["lala\nRust CLI"]
     TGBot["telegram/\nPython bot"]
     LLML["LLML\nPython/FastAPI\n:3000"]
-    Config["ai-config.yaml\n(2 model roles)"]
+    Config["ai-config.yaml\n(default_work_model + work_models)"]
     GGUF["*.gguf model files\n(local filesystem)"]
     DB[("PostgreSQL\n+ pgvector\n:5432")]
-    Registry["ModelRegistry\nrole → ModelRunner"]
+    Registry["ModelRegistry\nmodel name → ModelRunner"]
     Classifier["classifier.py\nheuristic + LLM"]
 
     User -->|"stdin / rustyline"| Lala
@@ -237,14 +237,14 @@ The entire vector is sent on every request so the model maintains multi-turn con
 
 ### 5.1 Multi-Model Configuration (`ai-config.yaml`)
 
-LLML loads **all** models declared in `ai-config.yaml` at startup and stores them in a `ModelRegistry` keyed by `role`. Two roles are defined by default:
+LLML loads **all** work models declared in `ai-config.yaml` at startup and stores them in a `ModelRegistry` keyed by model name. Two default work models are configured by example:
 
-| Role | Type | Temperature | `n_ctx` | Purpose |
-|------|------|-------------|---------|---------|
-| `reasoning` | Reasoning | 0.7 | 2048 | Deep analysis, multi-step thinking |
-| `decision` | Decision | 0.3 | 512 | Short, deterministic action selection |
+| Model | Purpose | Temperature | `n_ctx` | Notes |
+|------|---------|-------------|---------|-------|
+| `reasoning` | Deep analysis, multi-step thinking | 0.7 | 2048 | Uses a larger context window |
+| `decision` | Short, deterministic output | 0.3 | 512 | Used to produce the final answer |
 
-The `role` field in each model entry is the API-facing key. Both roles currently load the same GGUF file — swap `modelPath` independently to use different checkpoints.
+The `name` field in each work model entry is the API-facing key. Both models currently use the same GGUF file by default — swap `model_path` independently to use different checkpoints.
 
 ### 5.2 Startup
 
@@ -276,8 +276,8 @@ sequenceDiagram
     lala->>fastapi: POST /v1/chat/completions\n{model?, messages, max_tokens?, temperature?}
 
     fastapi->>fastapi: validate messages not empty
-    fastapi->>registry: resolve role\n(req.model → exact lookup, or first())
-    registry-->>fastapi: ModelRunner  OR  400 unknown role / 500 empty registry
+    fastapi->>registry: resolve model name\n(req.model → exact lookup, or first())
+    registry-->>fastapi: ModelRunner  OR  400 unknown model / 500 empty registry
 
     fastapi->>fastapi: slide_messages(messages, n_ctx budget)
     fastapi->>fastapi: build_prompt(messages)\nMistral [INST]...[/INST] format
@@ -292,7 +292,7 @@ sequenceDiagram
 
 ### 5.3 Request: GET /v1/models
 
-Returns all registered role names (e.g. `"reasoning"`, `"decision"`) in OpenAI list format. No inference involved.
+Returns all registered work model names (e.g. `"reasoning"`, `"decision"`) in OpenAI list format. No inference involved.
 
 ---
 
@@ -368,30 +368,34 @@ The reasoning output (`analysis`) is displayed to the user in the CLI under a `�
 
 ## 7. Configuration — `ai-config.yaml`
 
-Parsed by `LLML/config.py` (`load_config()`) into a `list[ModelParams]` dataclass on startup. Each model defines a role key, GGUF path, and inference parameters.
+Parsed by `LLML/config.py` (`load_config()`) into an `AiConfig` dataclass on startup. Each configured work model defines a `name`, GGUF path, and inference parameters.
 
 ```mermaid
 classDiagram
     class ModelParams {
-        +str role
-        +str model_path
         +float temperature
         +int max_tokens
         +int n_gpu_layers
         +int n_threads
+        +int n_threads_batch
         +int n_ctx
         +int n_batch
+        +bool use_mlock
+        +bool embedding
+    }
+    class ModelConfig {
+        +str name
+        +str model_path
+        +ModelParams params
     }
     class AiConfig {
         +int version
-        +list~ModelParams~ models
+        +str default_work_model
+        +list~ModelConfig~ work_models
+        +ModelConfig? embedding_model
     }
-    AiConfig --> ModelParams
-    note for ModelParams {
-        +str name
-        +str description
-        +str role
-    }
+    AiConfig --> ModelConfig
+    ModelConfig --> ModelParams
 ```
 
 **Registered models (current `ai-config.yaml`):**
