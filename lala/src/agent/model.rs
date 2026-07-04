@@ -48,7 +48,7 @@ struct ModelsResponse {
 struct ModelInfo {
     id: String,
     #[allow(dead_code)]
-    object: String,
+    object: String, // type: ignore
 }
 
 #[derive(Debug, Deserialize)]
