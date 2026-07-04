@@ -6,16 +6,13 @@
 ///
 /// Idempotent: files already recorded in `schema_migrations` are skipped.
 
-use std::fs;
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use postgres::Client;
 
-/// Apply all pending migrations in `migrations_dir` to the connected client.
+/// Apply all embedded migrations to the connected client.
 ///
 /// Returns the list of migration versions that were applied this run.
-pub fn run_migrations(client: &mut Client, migrations_dir: &str) -> Result<Vec<String>> {
+pub fn run_migrations(client: &mut Client) -> Result<Vec<String>> {
     // Ensure the tracking table exists before we query it.
     client.batch_execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -32,47 +29,16 @@ pub fn run_migrations(client: &mut Client, migrations_dir: &str) -> Result<Vec<S
         .map(|row| row.get::<_, String>(0))
         .collect();
 
-    // Discover migration files.
-    let dir = Path::new(migrations_dir);
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut files: Vec<_> = fs::read_dir(dir)
-        .with_context(|| format!("reading migrations dir: {migrations_dir}"))?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            if path.extension()?.to_str()? == "sql" {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Apply in lexicographic order (001_, 002_, …).
-    files.sort();
-
     let mut applied_this_run = Vec::new();
 
-    for file in &files {
-        let version = file
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-
+    for (version, sql) in crate::migrations::MIGRATIONS {
+        let version = version.to_string();
         if applied.contains(&version) {
             continue;
         }
 
-        let sql = fs::read_to_string(file)
-            .with_context(|| format!("reading migration file: {}", file.display()))?;
-
-        // Apply inside a transaction for atomicity.
         let mut tx = client.transaction().context("starting migration transaction")?;
-        tx.batch_execute(&sql)
+        tx.batch_execute(sql)
             .with_context(|| format!("applying migration {version}"))?;
         tx.execute(
             "INSERT INTO schema_migrations (version) VALUES ($1)
@@ -87,4 +53,22 @@ pub fn run_migrations(client: &mut Client, migrations_dir: &str) -> Result<Vec<S
     }
 
     Ok(applied_this_run)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_migrations_are_present() {
+        assert!(!crate::migrations::MIGRATIONS.is_empty(), "No embedded migrations found");
+        let versions: Vec<_> = crate::migrations::MIGRATIONS
+            .iter()
+            .map(|(version, _)| *version)
+            .collect();
+        let mut sorted = versions.clone();
+        sorted.sort();
+        assert_eq!(versions, sorted, "Embedded migrations are not in lexicographic order");
+        assert_eq!(versions.len(), versions.iter().collect::<std::collections::HashSet<_>>().len(), "Duplicate migration versions found");
+    }
 }
