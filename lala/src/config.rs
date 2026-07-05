@@ -35,6 +35,16 @@ your own natural language as if you simply know it. If the available context and
 part of what's asked, say so plainly rather than guessing or fabricating. Keep your tone warm and direct, 
 and answer only what the user actually asked.";
 
+const DEFAULT_DB_USER: &str = "postgres";
+const DEFAULT_DB_PASSWORD: &str = "mysecretpassword";
+const DEFAULT_DB_NAME: &str = "vector_db";
+
+#[derive(Debug, Clone)]
+pub struct DatabaseConfig {
+    pub user: String,
+    pub password: String,
+    pub name: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct LalaConfig {
@@ -42,6 +52,14 @@ pub struct LalaConfig {
     pub planning_system_prompt: String,
     pub reasoning_system_prompt: String,
     pub decision_system_prompt: String,
+    pub database: DatabaseConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawDatabaseConfig {
+    pub user: Option<String>,
+    pub password: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -54,6 +72,17 @@ struct RawLalaConfig {
     pub reasoning_system_prompt: Option<String>,
     #[serde(rename = "decision_system_prompt")]
     pub decision_system_prompt: Option<String>,
+    pub database: Option<RawDatabaseConfig>,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            user: DEFAULT_DB_USER.to_string(),
+            password: DEFAULT_DB_PASSWORD.to_string(),
+            name: DEFAULT_DB_NAME.to_string(),
+        }
+    }
 }
 
 impl Default for LalaConfig {
@@ -63,6 +92,7 @@ impl Default for LalaConfig {
             planning_system_prompt: DEFAULT_PLANNING_SYSTEM_PROMPT.to_string(),
             reasoning_system_prompt: DEFAULT_REASONING_SYSTEM_PROMPT.to_string(),
             decision_system_prompt: DEFAULT_DECISION_SYSTEM_PROMPT.to_string(),
+            database: DatabaseConfig::default(),
         }
     }
 }
@@ -90,6 +120,17 @@ impl LalaConfig {
             }
             if let Some(decision_system_prompt) = raw.decision_system_prompt {
                 config.decision_system_prompt = decision_system_prompt;
+            }
+            if let Some(db) = raw.database {
+                if let Some(user) = db.user {
+                    config.database.user = user;
+                }
+                if let Some(password) = db.password {
+                    config.database.password = password;
+                }
+                if let Some(name) = db.name {
+                    config.database.name = name;
+                }
             }
         }
 

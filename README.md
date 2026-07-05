@@ -67,7 +67,20 @@ If your models or config live outside the repo, override the paths before `docke
 MODELS_DIR=/path/to/models CONFIG_PATH=./ai-config.yaml docker compose up -d
 ```
 
-**Option B — Local Python**
+**Option B — Public Docker image**
+
+```sh
+cd lala
+cargo run -- serve
+```
+
+This starts both the public LLML image `dipghoshraj/llml:latest` and a PostgreSQL container on available local ports. The command prints both:
+- `LLML_API_URL`
+- `DATABASE_URL`
+
+Use those values before running `cargo run` for the CLI.
+
+**Option C — Local Python**
 
 ```sh
 cd LLML

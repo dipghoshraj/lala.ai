@@ -2,6 +2,10 @@ version: 1
 
 # Default work model used when a request does not include "model".
 default_work_model: "mistral-work"
+database:
+  user: "lala"
+  password: "lala"
+  name: "lala_db"
 
 # Vector store configuration.
 chroma:
