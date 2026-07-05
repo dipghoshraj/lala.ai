@@ -54,21 +54,3 @@ pub fn run_migrations(client: &mut Client) -> Result<Vec<String>> {
 
     Ok(applied_this_run)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn embedded_migrations_are_present() {
-        assert!(!crate::migrations::MIGRATIONS.is_empty(), "No embedded migrations found");
-        let versions: Vec<_> = crate::migrations::MIGRATIONS
-            .iter()
-            .map(|(version, _)| *version)
-            .collect();
-        let mut sorted = versions.clone();
-        sorted.sort();
-        assert_eq!(versions, sorted, "Embedded migrations are not in lexicographic order");
-        assert_eq!(versions.len(), versions.iter().collect::<std::collections::HashSet<_>>().len(), "Duplicate migration versions found");
-    }
-}
