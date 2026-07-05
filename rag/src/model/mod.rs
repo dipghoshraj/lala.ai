@@ -19,7 +19,7 @@ impl RagDB {
 
     pub fn new(url: &str) -> anyhow::Result<Self> {
         Ok(Self {
-            client: Mutex::new(Client::connect(url, NoTls)?),
+            client: Mutex::new(Client::connect(url, NoTls).map_err(|e| anyhow::anyhow!("Failed to connect to database if you are using different DB setup update `DATABASE_URL` env variable: {}", e))?),
         })
     }
 
