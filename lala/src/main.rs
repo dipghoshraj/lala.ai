@@ -16,7 +16,7 @@ fn print_banner() {
         println!("{}", fig.to_string().bright_green());
     }
 
-    println!("{}", "Intelligent • Developer • Productivity".green());
+    println!("{}", "Intelligent • Local first • Reasoning".green());
     println!("{}", "⚡ Built with Rust".green());
 }
 
