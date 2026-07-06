@@ -157,6 +157,8 @@ Connects to PostgreSQL, runs pending migrations, returns a ready store.
 # Default URL (matches docker-compose `db` service):
 DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/vector_db cargo run
 
+# When `lala serve` is used, `DATABASE_URL` may instead be populated from `lala-serve-env.json`.
+
 # Override migrations directory (default: ./migrations):
 LALA_MIGRATIONS_DIR=./custom/migrations cargo run
 ```

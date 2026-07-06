@@ -55,6 +55,7 @@ LLML reads `ai-config.yaml` from the repo root by default. The current config fo
 - `work_models`
 - optional `embedding_model`
 - optional `chroma`
+- optional `database` credentials for `lala serve` and CLI runtime fallback
 
 Sample config:
 
@@ -106,6 +107,11 @@ chroma:
   host: localhost
   port: 8000
   collection_name: lala_vectors
+
+database:
+  user: postgres
+  password: mysecretpassword
+  name: vector_db
 ```
 
 Key config behavior:

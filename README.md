@@ -67,18 +67,22 @@ If your models or config live outside the repo, override the paths before `docke
 MODELS_DIR=/path/to/models CONFIG_PATH=./ai-config.yaml docker compose up -d
 ```
 
-**Option B — Public Docker image**
+**Option B — Public Docker image with `lala serve`**
 
 ```sh
 cd lala
 cargo run -- serve
 ```
 
-This starts both the public LLML image `dipghoshraj/llml:latest` and a PostgreSQL container on available local ports. The command prints both:
+This starts both:
+- the public LLML Docker image `dipghoshraj/llml:latest`
+- a PostgreSQL container with persistent data volume `lala-postgres-data`
+
+It writes the service endpoints to a temp file named `lala-serve-env.json` and prints:
 - `LLML_API_URL`
 - `DATABASE_URL`
 
-Use those values before running `cargo run` for the CLI.
+The printed URLs can be used directly or sourced into the shell before running `cargo run`.
 
 **Option C — Local Python**
 
@@ -98,7 +102,7 @@ cargo run -- http://192.168.1.10:3000   # custom server URL
 LLML_API_URL=http://192.168.1.10:3000 cargo run
 ```
 
-If you are using PostgreSQL from Docker Compose, set `DATABASE_URL` if needed:
+If you are using PostgreSQL from Docker Compose or `lala serve`, set `DATABASE_URL` if needed:
 
 ```sh
 DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/vector_db cargo run
@@ -122,6 +126,8 @@ If you want a standalone PostgreSQL container instead of Compose, you can still 
 docker build -f psql.Dockerfile -t lala-postgres .
 docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 lala-postgres
 ```
+
+For `lala serve`, PostgreSQL is started in Docker with a persistent volume named `lala-postgres-data` so database state survives container restarts.
 
 ### Running all services together
 

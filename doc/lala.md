@@ -72,6 +72,14 @@ LALA_SMART_ROUTER=1 cargo run
 # Database URL (default: postgres://postgres:mysecretpassword@localhost:5432/vector_db)
 DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/vector_db cargo run
 
+# `lala serve` startup
+cd lala
+cargo run -- serve
+
+This starts LLML and PostgreSQL together on available local ports, persists PostgreSQL data to a Docker volume named `lala-postgres-data`, and writes service URLs to the temp file `lala-serve-env.json`.
+
+If `LLML_API_URL` or `DATABASE_URL` are not set, `lala` will read them from the temp file automatically.
+
 # Custom ingest directory (default: ./ingest)
 LALA_INGEST_DIR=/path/to/docs cargo run
 ```
