@@ -52,7 +52,7 @@ PostgreSQL + pgvector (docker-compose db service, :5432)
 ## Build & Run
 
 ```sh
-# Start the inference server (reads ../ai-config.yaml)
+# Start the inference server (reads /ai-config.yaml)
 cd LLML && pip install -r requirements.txt && python main.py
 
 # Start the CLI client (connects to http://localhost:3000 by default)

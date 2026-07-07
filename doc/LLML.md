@@ -243,9 +243,10 @@ Request example:
 
 Classification flow:
 
-- Uses `heuristic_route(query)` as a fast path.
-- If the model exists, also runs the LLM classifier prompt.
-- Returns `route` as `direct` or `reasoning`.
+- Runs `heuristic_route(query)` first.
+- If the heuristic returns `direct` and `LLML_CLASSIFIER_SKIP_LLM=1`, the endpoint skips the model load and returns `route: direct` immediately.
+- Otherwise, if the model exists, it also runs the LLM classifier prompt.
+- Returns `route` as `direct`, `reasoning`, or `metadata`.
 - `confidence` is `heuristic` when fallbacked or `llm` when the model is used.
 
 ### `POST /v1/embeddings`
@@ -296,8 +297,7 @@ These only exist when `LLML/main.py` successfully creates a `VectorStore`.
 
 The classifier module is used by `/v1/classify`.
 
-- `heuristic_route(query)` returns `direct` or `reasoning` without an LLM call.
-- `CLASSIFIER_SYSTEM` is the system prompt sent to the model when the LLM fallback runs.
+`CLASSIFIER_SYSTEM` is the system prompt sent to the model when the LLM fallback runs. When `LLML_CLASSIFIER_SKIP_LLM=1`, `/v1/classify` can return `direct` immediately for queries that match `heuristic_route()` without loading the model.
 
 Heuristic rules:
 
@@ -351,7 +351,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Default config path is `../ai-config.yaml`. Override with:
+Default config path is `/ai-config.yaml`. Override with:
 
 ```sh
 python main.py --config /path/to/ai-config.yaml --port 3000

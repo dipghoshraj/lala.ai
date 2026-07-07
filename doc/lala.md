@@ -91,7 +91,7 @@ URL resolution priority: **CLI argument → `LLML_API_URL` env var → `http://l
 | Variable | Default | Purpose |
 |----------|---------|--------|
 | `LLML_API_URL` | `http://localhost:3000` | LLML inference server URL |
-| `LALA_SMART_ROUTER` | unset | Set to `1` to enable LLM-based query classification |
+| `LALA_SMART_ROUTER` | enabled | Set to `0` to disable LLM-based query classification |
 | `DATABASE_URL` | `postgres://postgres:mysecretpassword@localhost:5432/vector_db` | PostgreSQL connection string for RAG storage |
 | `LALA_INGEST_DIR` | `./ingest` | Directory scanned by `/ingest` for batch ingestion |
 | `LALA_QDRANT_URL` | _(planned)_ | Qdrant endpoint URL — Phase 1 vector search migration |

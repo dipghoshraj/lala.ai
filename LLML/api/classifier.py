@@ -83,12 +83,80 @@ REASONING_TRIGGERS: tuple[str, ...] = (
 
 # ── LLM classifier prompt ─────────────────────────────────────────────────────
 
-CLASSIFIER_SYSTEM: str = (
-    "You are a routing classifier. "
-    "Reply with exactly one word — nothing else. "
-    "REASON: the query needs multi-step analysis, explanation, code, or comparison. "
-    "DIRECT: the query is a greeting, simple factual question, or short conversational reply."
-)
+CLASSIFIER_SYSTEM: str = """
+You are a routing classifier.
+
+Your task is to classify the user's query into exactly one category.
+
+Reply with exactly one token:
+DIRECT
+REASON
+METADATA
+
+Definitions:
+
+DIRECT
+- Greetings.
+- Small talk.
+- Simple factual questions.
+- Requests that can be answered directly without inspecting project or document data.
+
+REASON
+- Multi-step reasoning.
+- Comparisons.
+- Explanations.
+- Code generation or debugging.
+- Summarization.
+- Planning.
+- Analysis.
+
+METADATA
+- Requests about project or document information.
+- Counts.
+- Lists.
+- Inventory.
+- Names.
+- IDs.
+- Status.
+- Dates.
+- Owners.
+- Any query asking to retrieve or count stored project/document information.
+
+Priority:
+If a query asks for project or document data (count, list, inventory, metadata), ALWAYS return METADATA, even if it is phrased as a simple factual question.
+
+Examples:
+
+User: how many projects do we have
+METADATA
+
+User: list all projects
+METADATA
+
+User: show project names
+METADATA
+
+User: how many documents are available
+METADATA
+
+User: who owns project A
+METADATA
+
+User: explain project architecture
+REASON
+
+User: compare project A and project B
+REASON
+
+User: write Python code to parse JSON
+REASON
+
+User: hello
+DIRECT
+
+User: what is Python
+DIRECT
+"""
 
 def classifier_prompt(query: str) -> str:
     """
@@ -101,43 +169,61 @@ def classifier_prompt(query: str) -> str:
 
 # ── Heuristic classifier ──────────────────────────────────────────────────────
 
+METADATA_PATTERNS: tuple[str, ...] = (
+    "how many projects",
+    "how many documents",
+    "what documents",
+    "what projects",
+    "list documents",
+    "list projects",
+    "documents in this project",
+    "projects i have",
+    "project inventory",
+    "document inventory",
+)
 
 def heuristic_route(query: str) -> str:
     """
     Fast, zero-LLM routing decision.
 
-    Returns ``"direct"`` or ``"reasoning"``.
+    Returns ``"direct"``, ``"reasoning"``, or ``"metadata"``.
 
     Priority order
     --------------
     1. Matches a greeting/social pattern            → ``"direct"``
-    2. ≤ 3 words and no reasoning trigger           → ``"direct"``
-    3. Contains a reasoning trigger keyword         → ``"reasoning"``
-    4. ≤ 8 words with no trigger                    → ``"direct"``
-    5. Longer queries                               → ``"reasoning"``
+    2. Matches a metadata-specific pattern          → ``"metadata"``
+    3. ≤ 3 words and no reasoning trigger           → ``"direct"``
+    4. Contains a reasoning trigger keyword         → ``"reasoning"``
+    5. ≤ 8 words with no trigger                    → ``"direct"``
+    6. Longer queries                               → ``"reasoning"``
     """
     lower = query.strip().lower()
     reasoning_trigger = any(t in lower for t in REASONING_TRIGGERS)
+    metadata_trigger = any(p in lower for p in METADATA_PATTERNS)
 
     # 1 — social patterns: exact match or starts-with (e.g. "thanks a lot")
     for pat in DIRECT_PATTERNS:
         if (lower == pat or lower.startswith(pat + " ")) and not reasoning_trigger:
             return "direct"
 
+    # 2 — simple metadata patterns should bypass the direct fast-path.
+    if metadata_trigger:
+        return "metadata"
+
     words = lower.split()
     word_count = len(words)
 
-    # 2 — very short, no trigger
+    # 3 — very short, no trigger
     if word_count <= 3 and not reasoning_trigger:
         return "direct"
 
-    # 3 — explicit reasoning trigger present
+    # 4 — explicit reasoning trigger present
     if reasoning_trigger:
         return "reasoning"
 
-    # 4 — medium length, no trigger
+    # 5 — medium length, no trigger
     if word_count <= 8 and not reasoning_trigger:
         return "direct"
 
-    # 5 — default for longer queries
+    # 6 — default for longer queries
     return "reasoning"

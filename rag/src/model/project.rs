@@ -74,6 +74,13 @@ impl Project {
             .collect())
     }
 
+    pub fn count_all() -> anyhow::Result<usize> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        let row = client.query_one(crate::model::sql::SELECT_PROJECT_COUNT, &[])?;
+        Ok(row.get::<_, i64>(0) as usize)
+    }
+
     pub fn find_by_id_or_name(value: &str) -> anyhow::Result<Option<Self>> {
         if let Some(project) = Self::fetch_by_id(value)? {
             return Ok(Some(project));

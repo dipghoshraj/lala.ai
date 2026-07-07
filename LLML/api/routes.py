@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -359,7 +360,9 @@ async def classify_query(
     fast = heuristic_route(query)
     registry = request.app.state.registry
 
-    if fast == "direct":
+
+# Fast-path for direct queries when skipping LLM classification is enabled
+    if fast == "direct" and os.environ.get("LLML_CLASSIFIER_SKIP_LLM", "0") == "1":
         logger.info("classify: heuristic direct fast-path, skipping work model load")
         return JSONResponse(
             ClassifyResponse(route="direct", confidence="heuristic").model_dump()
@@ -380,18 +383,21 @@ async def classify_query(
             ChatMessage(role="user", content=query),
         ]
         prompt = build_prompt(classify_messages)
+        logger.info("prompt for classification: %r, system=%r, query=%r", prompt, CLASSIFIER_SYSTEM, query)
 
         try:
-            raw = await runner.generate(prompt, max_tokens=5, temperature=0.0)
-            route = "reasoning" if "REASON" in raw.strip().upper() else "direct"
+            raw = await runner.generate(prompt, max_tokens=4, temperature=0.0)
+            normalized = raw.strip().upper()
+            if "METADATA" in normalized:
+                route = "metadata"
+            elif "REASON" in normalized:
+                route = "reasoning"
+            else:
+                route = "direct"
             confidence = "llm"
             logger.info(
                 "classify llm  model=%s  route=%s  raw=%r  query_len=%d",
-                role,
-                route,
-                raw.strip(),
-                len(query),
-            )
+                    role,route, raw.strip(), len(query))
         except Exception as exc:
             logger.warning("classify llm error, falling back to heuristic: %s", exc)
             route = fast

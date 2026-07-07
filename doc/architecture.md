@@ -121,7 +121,7 @@ URL resolution order:
 2. `LLML_API_URL` environment variable
 3. Fallback: `http://localhost:3000`
 
-`main()` also reads `LALA_SMART_ROUTER` (set to `"1"` for LLM-based classification) and `DATABASE_URL` (libpq connection string; default matches the `docker-compose.yml` `db` service). When `lala serve` is used, service URLs are persisted to a temp file `lala-serve-env.json` and may be consumed by subsequent CLI runs. `RagStore::open()` is called before `cli::run()` and runs any pending migrations automatically.
+`main()` also reads `LALA_SMART_ROUTER` (enabled by default; set to "0" to disable LLM-based classification) and `DATABASE_URL` (libpq connection string; default matches the `docker-compose.yml` `db` service). When `lala serve` is used, service URLs are persisted to a temp file `lala-serve-env.json` and may be consumed by subsequent CLI runs. `RagStore::open()` is called before `cli::run()` and runs any pending migrations automatically.
 
 ---
 
@@ -132,12 +132,12 @@ URL resolution order:
 
 ```
 python main.py [--config PATH] [--port PORT]
-# reads ../ai-config.yaml by default, binds 0.0.0.0:3000
+# reads ai-config.yaml by default, binds 0.0.0.0:3000
 ```
 
 Startup sequence (see §5 for detail):
 1. Parse CLI args (`--config`, `--port`)
-2. `load_config("../ai-config.yaml")`
+2. `load_config("ai-config.yaml")`
 3. For each model in config → `ModelRunner(path, params)` → register in `ModelRegistry`
 4. Build FastAPI app with registry in `app.state`, mount API router
 5. `uvicorn.run(app, host="0.0.0.0", port=3000)`
@@ -577,7 +577,7 @@ Classifies a query as requiring reasoning or a direct answer. Used by `lala` CLI
 | `route` | `"direct"` \| `"reasoning"` | Destination path |
 | `confidence` | `"heuristic"` \| `"llm"` | Whether LLM or fast-path heuristic decided |
 
-The heuristic fast-path fires first (social/greeting patterns → `"direct"` immediately, no LLM call). On error, the endpoint returns 200 with a heuristic fallback — never 5xx.
+The heuristic fast-path fires first (social/greeting patterns → "direct" immediately, no LLM call). If `LLML_CLASSIFIER_SKIP_LLM=1` and the heuristic route is `direct`, the endpoint skips the LLM classifier entirely. On error, the endpoint returns 200 with a heuristic fallback — never 5xx.
 
 #### curl example
 

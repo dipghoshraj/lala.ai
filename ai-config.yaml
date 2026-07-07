@@ -1,5 +1,8 @@
 version: 1
 
+# Host directory containing GGUF model files for `lala serve`.
+model_dir: "D:\\models"
+
 # Default work model used when a request does not include "model".
 default_work_model: "mistral-work"
 database:

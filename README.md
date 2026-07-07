@@ -89,7 +89,7 @@ The printed URLs can be used directly or sourced into the shell before running `
 ```sh
 cd LLML
 pip install -r requirements.txt
-python main.py                          # reads ../ai-config.yaml, serves :3000
+python main.py                          # reads ai-config.yaml, serves :3000
 python main.py --config /path/to/ai-config.yaml --port 3000
 ```
 
@@ -254,7 +254,9 @@ flowchart TD
 | `direct` | final answer only | Greetings, simple factual questions, short conversational replies |
 | `reasoning` | reasoning + final answer | Analysis, code, comparisons, multi-step questions |
 
-**lala CLI:** enable LLM classification with `LALA_SMART_ROUTER=1`. Default uses the local heuristic (no extra network call).
+**lala CLI:** smart routing is enabled by default. Set `LALA_SMART_ROUTER=0` to disable LLM-based query classification and fall back to the local heuristic.
+
+**LLML server:** set `LLML_CLASSIFIER_SKIP_LLM=1` to skip model loading for queries that `heuristic_route()` classifies as `direct`.
 
 **Telegram bot:** enable with `SMART_ROUTER=1` in `.env`. Default routes every message through the full reasoning pipeline.
 
@@ -350,6 +352,8 @@ Read by LLML only. Defines the default work model, the available work models, an
 
 ```yaml
 version: 1
+model_dir: /path/to/models
+
 default_work_model: mistral-work
 
 work_models:
@@ -390,7 +394,7 @@ Notes:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LLML_API_URL` | `http://localhost:3000` | LLML server URL (overridden by CLI arg) |
-| `LALA_SMART_ROUTER` | `0` | Set to `1` to enable LLM-based query classification |
+| `LALA_SMART_ROUTER` | enabled | Set to `0` to disable LLM-based query classification |
 
 ### LLML (Python inference server)
 

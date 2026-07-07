@@ -1,6 +1,7 @@
 use crate::agent::model::{ApiClient, ChatMessage, RouteDecision};
 use crate::config::LalaConfig;
 use rag::RagStore;
+use rag::model::project::Project;
 
 // ── Token estimation ──────────────────────────────────────────────────────────
 
@@ -77,6 +78,27 @@ const REASONING_TRIGGERS: &[&str] = &[
     "architecture", "step", "process", "reasoning", "derive", "prove",
     "optimise", "optimize", "refactor", "suggest", "recommend",
 ];
+
+/// Returns `true` if the query is asking for metadata such as counts, document lists, or project inventory.
+fn needs_metadata(input: &str) -> bool {
+    let lower = input.trim().to_lowercase();
+    let metadata_patterns = [
+        "how many projects",
+        "how many documents",
+        "what documents",
+        "what projects",
+        "list documents",
+        "list projects",
+        "documents in this project",
+        "projects i have",
+        "project inventory",
+        "document inventory",
+        "selected project",
+        "current project",
+    ];
+
+    metadata_patterns.iter().any(|pattern| lower.contains(pattern))
+}
 
 /// Returns `true` if the query warrants running through the reasoning step.
 ///
@@ -255,7 +277,9 @@ impl<'a> Agent<'a> {
             Err(e) => {
                 // Log silently and fall back to the local heuristic.
                 eprintln!("[classify] server error, falling back to heuristic: {e}");
-                if needs_reasoning(input) {
+                if needs_metadata(input) {
+                    RouteDecision::Metadata
+                } else if needs_reasoning(input) {
                     RouteDecision::Reasoning
                 } else {
                     RouteDecision::Direct
@@ -304,6 +328,78 @@ impl<'a> Agent<'a> {
         };
         let decision_messages = Self::replace_system(history, &system);
         self.client.chat_stream(&decision_messages, Some(256), None, None)
+    }
+
+    pub fn run_metadata_stream(&self, history: &[ChatMessage], metadata: &str) -> anyhow::Result<crate::agent::model::ChatStream> {
+        let base = &self.config.decision_system_prompt;
+        let system = format!(
+            "{}\n\n--- Metadata Facts ---\n{}\n--- End Metadata Facts ---\n\n\
+             Use the metadata above to answer the user's question exactly and concisely. Do not speculate beyond these facts.",
+            base, metadata
+        );
+        let metadata_messages = Self::replace_system(history, &system);
+        self.client.chat_stream(&metadata_messages, Some(256), None, None)
+    }
+
+    pub fn build_metadata_facts(&self, query: &str) -> anyhow::Result<String> {
+        let lower = query.to_lowercase();
+        let mut facts = Vec::new();
+
+        // Always include project-level metadata when the current project is selected.
+        if let Some(project) = self.store.selected_project()? {
+            let doc_count = self.store.document_count_for_current_project()?;
+            facts.push(format!("selected_project: {}", project.name));
+            facts.push(format!("selected_project_id: {}", project.id));
+            if !project.description.is_empty() {
+                facts.push(format!("selected_project_description: {}", project.description));
+            }
+            facts.push(format!("selected_project_document_count: {}", doc_count));
+
+            if lower.contains("what documents")
+                || lower.contains("documents in this project")
+                || lower.contains("list documents")
+                || lower.contains("how many documents")
+                || lower.contains("document inventory")
+            {
+                let docs = self.store.documents_for_current_project()?;
+                if docs.is_empty() {
+                    facts.push("current_project_documents: none".to_string());
+                } else {
+                    facts.push("current_project_documents:".to_string());
+                    for doc in docs {
+                        facts.push(format!("- {} ({})", doc.title, doc.source));
+                    }
+                }
+            }
+        }
+
+        if lower.contains("project") {
+            let total_projects = self.store.project_count()?;
+            facts.push(format!("total_projects: {}", total_projects));
+
+            if lower.contains("what projects") || lower.contains("list projects") || lower.contains("projects i have") {
+                let projects = Project::fetch_all()?;
+                if projects.is_empty() {
+                    facts.push("projects: none".to_string());
+                } else {
+                    facts.push("projects:".to_string());
+                    for project in projects {
+                        facts.push(format!("- {} ({})", project.name, project.id));
+                    }
+                }
+            }
+        }
+
+        if lower.contains("how many documents") && self.store.current_project_id().is_none() {
+            let total_docs = self.store.document_count()?;
+            facts.push(format!("total_documents: {}", total_docs));
+        }
+
+        if facts.is_empty() {
+            facts.push("metadata: no project or document facts available for this query".to_string());
+        }
+
+        Ok(facts.join("\n"))
     }
 
     /// Step 1 — send the full history to the reasoning model.

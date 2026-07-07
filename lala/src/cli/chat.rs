@@ -91,6 +91,7 @@ impl<'a> Chat<'a> {
         match route {
             RouteDecision::Direct => self.run_direct(),
             RouteDecision::Reasoning => self.run_reasoning(),
+            RouteDecision::Metadata => self.run_metadata(),
         }
     }
 
@@ -113,11 +114,31 @@ impl<'a> Chat<'a> {
     fn classify(&self, input: &str) -> RouteDecision {
         if self.smart_router {
             self.agent.classify_query(input, &self.history)
+        } else if self.agent.current_project_id().is_some() && self.is_metadata_query(input) {
+            RouteDecision::Metadata
         } else if needs_reasoning(input) {
             RouteDecision::Reasoning
         } else {
             RouteDecision::Direct
         }
+    }
+
+    fn is_metadata_query(&self, input: &str) -> bool {
+        let lower = input.to_lowercase();
+        [
+            "how many projects",
+            "how many documents",
+            "what documents",
+            "what projects",
+            "list documents",
+            "list projects",
+            "documents in this project",
+            "projects i have",
+            "current project",
+            "selected project",
+        ]
+        .iter()
+        .any(|pat| lower.contains(pat))
     }
 
     fn sync_project_history(&mut self) {
@@ -258,6 +279,53 @@ impl<'a> Chat<'a> {
                     }
                 }
             },
+        }
+    }
+
+    fn run_metadata(&mut self) {
+        let input = match self.history.iter().rfind(|m| m.role == "user") {
+            Some(m) => m.content.clone(),
+            None => {
+                display::error("No user message found.");
+                return;
+            }
+        };
+
+        let lower = input.to_lowercase();
+        if self.agent.current_project_id().is_none()
+            && (lower.contains("this project")
+                || lower.contains("current project")
+                || lower.contains("selected project"))
+        {
+            display::error("No project selected. Use /project select <name-or-id> or /project create <name> first.");
+            self.history.pop();
+            return;
+        }
+
+        let metadata = match self.agent.build_metadata_facts(&input) {
+            Ok(facts) => facts,
+            Err(e) => {
+                display::error(&format!("Failed to build metadata facts: {e}"));
+                self.history.pop();
+                return;
+            }
+        };
+
+        match self.agent.run_metadata_stream(&self.history, &metadata) {
+            Ok(stream) => match display::print_section_stream("Answer", display::BOLD_CYAN, display::CYAN, stream) {
+                Ok(_reply) => {
+                    // Discard metadata queries and their replies from session history.
+                    self.history.pop(); // user query
+                }
+                Err(e) => {
+                    display::error(&format!("Error streaming answer: {e}"));
+                    self.history.pop();
+                }
+            },
+            Err(e) => {
+                display::error(&format!("Metadata answer failed: {e}"));
+                self.history.pop();
+            }
         }
     }
 
