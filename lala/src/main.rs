@@ -18,7 +18,7 @@ fn print_banner() {
     }
 
     println!("{}", "Intelligent • Local first • Reasoning".green());
-    println!("{}", "⚡ Built with Rust".green());
+    println!("{}", "⚡ Built with Local First Principles".green());
 }
 
 fn main() -> anyhow::Result<()> {
@@ -43,7 +43,9 @@ fn main() -> anyhow::Result<()> {
                 db = config.database.name,
             );
 
-            llml::start_llml_docker(llml_port)?;
+            let model_dir = config.model_dir.clone();
+            println!("Using model directory: {}", model_dir);
+            llml::start_llml_docker(llml_port, &model_dir)?;
             llml::start_postgres_docker(
                 psql_port,
                 &config.database.user,

@@ -132,12 +132,12 @@ URL resolution order:
 
 ```
 python main.py [--config PATH] [--port PORT]
-# reads ../ai-config.yaml by default, binds 0.0.0.0:3000
+# reads ai-config.yaml by default, binds 0.0.0.0:3000
 ```
 
 Startup sequence (see §5 for detail):
 1. Parse CLI args (`--config`, `--port`)
-2. `load_config("../ai-config.yaml")`
+2. `load_config("ai-config.yaml")`
 3. For each model in config → `ModelRunner(path, params)` → register in `ModelRegistry`
 4. Build FastAPI app with registry in `app.state`, mount API router
 5. `uvicorn.run(app, host="0.0.0.0", port=3000)`

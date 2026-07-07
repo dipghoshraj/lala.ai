@@ -351,7 +351,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Default config path is `../ai-config.yaml`. Override with:
+Default config path is `/ai-config.yaml`. Override with:
 
 ```sh
 python main.py --config /path/to/ai-config.yaml --port 3000

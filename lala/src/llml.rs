@@ -43,18 +43,37 @@ pub fn allocate_available_ports(count: usize) -> anyhow::Result<Vec<u16>> {
     Ok(ports)
 }
 
-pub fn start_llml_docker(port: u16) -> anyhow::Result<()> {
+pub fn start_llml_docker(port: u16, models_dir: &str) -> anyhow::Result<()> {
     let port_mapping = format!("{port}:3000");
 
-    let models_dir = std::env::var("MODELS_DIR").unwrap_or_else(|_| "D:/models".to_string());
-    let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "./ai-config.yaml".to_string());
+    let config_path_env = std::env::var("CONFIG_PATH").ok();
+    let config_path = config_path_env
+        .clone()
+        .unwrap_or_else(|| "ai-config.yaml".to_string());
 
-    let models_path = std::path::PathBuf::from(&models_dir);
+    if models_dir.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "ai-config.yaml must define 'model_dir' and it cannot be empty."
+        ));
+    }
+
+    println!("model dir: {}", models_dir);
+
+    let models_path = std::path::PathBuf::from(models_dir);
     let models_path = if models_path.is_absolute() {
         models_path
     } else {
         std::env::current_dir()?.join(models_path)
     };
+
+    println!("Resolved model_dir path: {}", models_path.display());
+
+    if !models_path.is_dir() {
+        return Err(anyhow::anyhow!(
+            "The model_dir path '{}' does not exist or is not a directory.",
+            models_path.display()
+        ));
+    }
 
     let config_path = std::path::PathBuf::from(&config_path);
     let config_path = if config_path.is_absolute() {
@@ -62,6 +81,20 @@ pub fn start_llml_docker(port: u16) -> anyhow::Result<()> {
     } else {
         std::env::current_dir()?.join(config_path)
     };
+
+    if !config_path.is_file() {
+        if config_path_env.is_some() {
+            return Err(anyhow::anyhow!(
+                "CONFIG_PATH was set to '{}', but that file does not exist. Please point CONFIG_PATH to a valid ai-config.yaml file.",
+                config_path.display()
+            ));
+        }
+
+        return Err(anyhow::anyhow!(
+            "Cannot start LLML Docker because ai-config.yaml was not found at '{}'.\nIf you are running from the lala crate directory, make sure ai-config.yaml exists or set CONFIG_PATH to the correct path.",
+            config_path.display()
+        ));
+    }
 
     fn docker_path(path: &std::path::Path) -> String {
         let mut s = path.to_string_lossy().to_string();
@@ -75,6 +108,7 @@ pub fn start_llml_docker(port: u16) -> anyhow::Result<()> {
     }
 
     let models_mapping = format!("{}:/models:ro", docker_path(&models_path));
+    println!("Mounting models directory: {}", models_path.to_str().unwrap_or("<invalid path>"));
     let config_mapping = format!("{}:/app/ai-config.yaml:ro", docker_path(&config_path));
 
     let output = Command::new("docker")

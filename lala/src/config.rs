@@ -53,6 +53,7 @@ pub struct LalaConfig {
     pub reasoning_system_prompt: String,
     pub decision_system_prompt: String,
     pub database: DatabaseConfig,
+    pub model_dir: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -73,6 +74,7 @@ struct RawLalaConfig {
     #[serde(rename = "decision_system_prompt")]
     pub decision_system_prompt: Option<String>,
     pub database: Option<RawDatabaseConfig>,
+    pub model_dir: Option<String>,
 }
 
 impl Default for DatabaseConfig {
@@ -93,6 +95,7 @@ impl Default for LalaConfig {
             reasoning_system_prompt: DEFAULT_REASONING_SYSTEM_PROMPT.to_string(),
             decision_system_prompt: DEFAULT_DECISION_SYSTEM_PROMPT.to_string(),
             database: DatabaseConfig::default(),
+            model_dir: String::new(),
         }
     }
 }
@@ -102,37 +105,65 @@ impl LalaConfig {
         let config_path = path
             .map(|p| p.to_string())
             .or_else(|| std::env::var("LALA_CONFIG_PATH").ok())
-            .unwrap_or_else(|| "ai-config.yaml".to_string());
+            .map(|p| std::path::PathBuf::from(p))
+            .or_else(|| {
+                let current = std::path::PathBuf::from("ai-config.yaml");
+                if current.is_file() {
+                    return Some(current);
+                }
+                let parent = std::env::current_dir()
+                    .ok()
+                    .map(|cwd| cwd.join(".".to_string()).join("ai-config.yaml"))?;
+                if parent.is_file() {
+                    return Some(parent);
+                }
+                Some(std::path::PathBuf::from("ai-config.yaml"))
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("ai-config.yaml"));
 
         let mut config = LalaConfig::default();
 
-        if let Ok(data) = fs::read_to_string(&config_path) {
-            let raw: RawLalaConfig = serde_yaml::from_str(&data).unwrap_or_default();
+        let data = fs::read_to_string(&config_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to read ai-config.yaml at '{}': {}",
+                config_path.display(),
+                e
+            )
+        })?;
 
-            if let Some(system_prompt) = raw.system_prompt {
-                config.system_prompt = system_prompt;
+        let raw: RawLalaConfig = serde_yaml::from_str(&data)
+            .map_err(|e| anyhow::anyhow!("Failed to parse ai-config.yaml: {}", e))?;
+
+        if let Some(system_prompt) = raw.system_prompt {
+            config.system_prompt = system_prompt;
+        }
+        if let Some(planning_system_prompt) = raw.planning_system_prompt {
+            config.planning_system_prompt = planning_system_prompt;
+        }
+        if let Some(reasoning_system_prompt) = raw.reasoning_system_prompt {
+            config.reasoning_system_prompt = reasoning_system_prompt;
+        }
+        if let Some(decision_system_prompt) = raw.decision_system_prompt {
+            config.decision_system_prompt = decision_system_prompt;
+        }
+
+        if let Some(db) = raw.database {
+            if let Some(user) = db.user {
+                config.database.user = user;
             }
-            if let Some(planning_system_prompt) = raw.planning_system_prompt {
-                config.planning_system_prompt = planning_system_prompt;
+            if let Some(password) = db.password {
+                config.database.password = password;
             }
-            if let Some(reasoning_system_prompt) = raw.reasoning_system_prompt {
-                config.reasoning_system_prompt = reasoning_system_prompt;
-            }
-            if let Some(decision_system_prompt) = raw.decision_system_prompt {
-                config.decision_system_prompt = decision_system_prompt;
-            }
-            if let Some(db) = raw.database {
-                if let Some(user) = db.user {
-                    config.database.user = user;
-                }
-                if let Some(password) = db.password {
-                    config.database.password = password;
-                }
-                if let Some(name) = db.name {
-                    config.database.name = name;
-                }
+            if let Some(name) = db.name {
+                config.database.name = name;
             }
         }
+
+        config.model_dir = raw.model_dir.ok_or_else(|| {
+            anyhow::anyhow!(
+                "ai-config.yaml must define 'model_dir' as the host directory containing GGUF model files."
+            )
+        })?;
 
         Ok(config)
     }

@@ -89,7 +89,7 @@ The printed URLs can be used directly or sourced into the shell before running `
 ```sh
 cd LLML
 pip install -r requirements.txt
-python main.py                          # reads ../ai-config.yaml, serves :3000
+python main.py                          # reads ai-config.yaml, serves :3000
 python main.py --config /path/to/ai-config.yaml --port 3000
 ```
 
@@ -352,6 +352,8 @@ Read by LLML only. Defines the default work model, the available work models, an
 
 ```yaml
 version: 1
+model_dir: /path/to/models
+
 default_work_model: mistral-work
 
 work_models:
