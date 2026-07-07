@@ -577,7 +577,7 @@ Classifies a query as requiring reasoning or a direct answer. Used by `lala` CLI
 | `route` | `"direct"` \| `"reasoning"` | Destination path |
 | `confidence` | `"heuristic"` \| `"llm"` | Whether LLM or fast-path heuristic decided |
 
-The heuristic fast-path fires first (social/greeting patterns → `"direct"` immediately, no LLM call). On error, the endpoint returns 200 with a heuristic fallback — never 5xx.
+The heuristic fast-path fires first (social/greeting patterns → "direct" immediately, no LLM call). If `LLML_CLASSIFIER_SKIP_LLM=1` and the heuristic route is `direct`, the endpoint skips the LLM classifier entirely. On error, the endpoint returns 200 with a heuristic fallback — never 5xx.
 
 #### curl example
 

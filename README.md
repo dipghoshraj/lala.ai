@@ -256,6 +256,8 @@ flowchart TD
 
 **lala CLI:** smart routing is enabled by default. Set `LALA_SMART_ROUTER=0` to disable LLM-based query classification and fall back to the local heuristic.
 
+**LLML server:** set `LLML_CLASSIFIER_SKIP_LLM=1` to skip model loading for queries that `heuristic_route()` classifies as `direct`.
+
 **Telegram bot:** enable with `SMART_ROUTER=1` in `.env`. Default routes every message through the full reasoning pipeline.
 
 ---
