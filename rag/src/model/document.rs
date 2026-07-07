@@ -22,16 +22,38 @@ impl Document {
         }
     }
 
-    pub fn exist(source: &str) -> anyhow::Result<bool> {
+    pub fn get_by_source(source: &str) -> anyhow::Result<Option<Self>> {
         let db = crate::model::db();
         let mut client = db.client();
-        let row = client.query_one(
-            crate::model::sql::DOCUMENT_EXISTS,
+        let row = client.query_opt(
+            crate::model::sql::SELECT_DOCUMENT_BY_SOURCE,
             &[&source],
         )?;
-        let exists: bool = row.get(0);
-        print!("Document exist check for source: {source}, exists: {}\n", exists);
-        Ok(exists)
+        if let Some(row) = row {
+            Ok(Some(Self {
+                id: row.get(0),
+                title: row.get(1),
+                source: row.get(2),
+                created_at: row.get(3),
+                project_id: row.get(4),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn exist(source: &str) -> anyhow::Result<bool> {
+        Ok(Self::get_by_source(source)?.is_some())
+    }
+
+    pub fn delete_by_source(source: &str) -> anyhow::Result<()> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        client.execute(
+            crate::model::sql::DELETE_DOCUMENT_BY_SOURCE,
+            &[&source],
+        )?;
+        Ok(())
     }
 
     pub fn insert(&self) -> anyhow::Result<()> {

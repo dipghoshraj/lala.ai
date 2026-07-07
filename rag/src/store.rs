@@ -1,4 +1,4 @@
-﻿use anyhow::{bail, Result};
+﻿use anyhow::Result;
 use std::sync::Mutex;
 
 use crate::chunker::chunk;
@@ -47,16 +47,16 @@ impl RagStore {
     /// Skips (returns an error) if a document with the same `source` already exists.
     pub fn store(&self, title: &str, source: &str, text: &str) -> Result<usize> {
         println!("Storing document: {title} ({source})");
-        let exists: bool = document::Document::exist(source)?;
-        if exists {
-            bail!("Already ingested: {source}");
+        let project_id = self.require_selected_project()?;
+        if document::Document::exist(source)? {
+            document::Document::delete_by_source(source)?;
+            println!("Reingesting existing document: {source}");
         }
 
         let chunks = chunk(text, 512, 64);
         if chunks.is_empty() {
             return Ok(0);
         }
-        let project_id = self.require_selected_project()?;
 
         let doc = document::Document::new(title, source, project_id);
         doc.insert()?;

@@ -1,7 +1,8 @@
 
 
 
-pub const DOCUMENT_EXISTS: &str = "SELECT EXISTS(SELECT 1 FROM documents WHERE source = $1)";
+pub const SELECT_DOCUMENT_BY_SOURCE: &str = "SELECT id, title, source, created_at, project_id FROM documents WHERE source = $1";
+pub const DELETE_DOCUMENT_BY_SOURCE: &str = "DELETE FROM documents WHERE source = $1";
 pub const INSERT_DOCUMENT: &str =
     "INSERT INTO documents (id, title, source, created_at, project_id) VALUES ($1, $2, $3, $4, $5)";
 pub const INSERT_CHUNK: &str = "INSERT INTO chunks (chunk_id, document_id, chunk_index, chunk_text, char_count) VALUES ($1, $2, $3, $4, $5)";

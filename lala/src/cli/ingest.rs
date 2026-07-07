@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::agent::model::ApiClient;
-use rag::RagStore;
+use rag::{model::document, RagStore};
 
 use super::display;
 
@@ -90,6 +90,11 @@ pub fn ingest_all(store: &RagStore, client: &ApiClient, args: &str) {
                 ingested += 1;
                 total_chunks += count;
             }
+            IngestResult::Updated(count) => {
+                display::success(&format!("{filename} → {count} chunks (updated)"));
+                ingested += 1;
+                total_chunks += count;
+            }
             IngestResult::Skipped(reason) => {
                 display::warn(&format!("{filename}: {reason}"));
                 skipped += 1;
@@ -136,6 +141,7 @@ pub fn ingest_file(store: &RagStore, client: &ApiClient, path: &str) {
 
     match ingest_single_file(store, client, path) {
         IngestResult::Ok(count) => display::success(&format!("{filename} → {count} chunks")),
+        IngestResult::Updated(count) => display::success(&format!("{filename} → {count} chunks (updated)")),
         IngestResult::Skipped(reason) => display::warn(&format!("{filename}: {reason}")),
         IngestResult::Err(e) => display::error(&format!("{filename}: {e}")),
     }
@@ -146,6 +152,7 @@ pub fn ingest_file(store: &RagStore, client: &ApiClient, path: &str) {
 
 enum IngestResult {
     Ok(usize),
+    Updated(usize),
     Skipped(String),
     Err(String),
 }
@@ -165,16 +172,16 @@ fn ingest_single_file(store: &RagStore, _client: &ApiClient, path: &str) -> Inge
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
 
+    let replaced = document::Document::exist(path).unwrap_or(false);
     match store.ingest(&title, path, &content) {
-        Ok(count) => IngestResult::Ok(count),
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("Already ingested") {
-                IngestResult::Skipped(msg)
+        Ok(count) => {
+            if replaced {
+                IngestResult::Updated(count)
             } else {
-                IngestResult::Err(msg)
+                IngestResult::Ok(count)
             }
         }
+        Err(e) => IngestResult::Err(e.to_string()),
     }
 }
 
