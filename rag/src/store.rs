@@ -2,7 +2,7 @@
 use std::sync::Mutex;
 
 use crate::chunker::chunk;
-use crate::model::{memory, document, chunk};
+use crate::model::{memory, document, chunk, project};
 use crate::model::chunk::ChunkRow;
 use crate::model::memory::MemoryBlock;
 
@@ -116,5 +116,29 @@ impl RagStore {
     pub fn chunk_count(&self) -> Result<usize> {
         let count = chunk::DocumentChunk::count()?;
         Ok(count)
+    }
+
+    pub fn project_count(&self) -> Result<usize> {
+        let count = project::Project::count_all()?;
+        Ok(count)
+    }
+
+    pub fn selected_project(&self) -> Result<Option<project::Project>> {
+        match self.current_project_id() {
+            Some(id) => project::Project::fetch_by_id(&id),
+            None => Ok(None),
+        }
+    }
+
+    pub fn document_count_for_current_project(&self) -> Result<usize> {
+        let project_id = self.require_selected_project()?;
+        let count = document::Document::count_by_project(&project_id)?;
+        Ok(count)
+    }
+
+    pub fn documents_for_current_project(&self) -> Result<Vec<document::Document>> {
+        let project_id = self.require_selected_project()?;
+        let docs = document::Document::fetch_by_project(&project_id)?;
+        Ok(docs)
     }
 }

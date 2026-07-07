@@ -121,7 +121,7 @@ URL resolution order:
 2. `LLML_API_URL` environment variable
 3. Fallback: `http://localhost:3000`
 
-`main()` also reads `LALA_SMART_ROUTER` (set to `"1"` for LLM-based classification) and `DATABASE_URL` (libpq connection string; default matches the `docker-compose.yml` `db` service). When `lala serve` is used, service URLs are persisted to a temp file `lala-serve-env.json` and may be consumed by subsequent CLI runs. `RagStore::open()` is called before `cli::run()` and runs any pending migrations automatically.
+`main()` also reads `LALA_SMART_ROUTER` (enabled by default; set to "0" to disable LLM-based classification) and `DATABASE_URL` (libpq connection string; default matches the `docker-compose.yml` `db` service). When `lala serve` is used, service URLs are persisted to a temp file `lala-serve-env.json` and may be consumed by subsequent CLI runs. `RagStore::open()` is called before `cli::run()` and runs any pending migrations automatically.
 
 ---
 

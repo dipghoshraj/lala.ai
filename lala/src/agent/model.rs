@@ -152,14 +152,18 @@ impl Iterator for ChatStream {
 pub enum RouteDecision {
     Direct,
     Reasoning,
+    Metadata,
 }
 
 impl RouteDecision {
-    /// Convert the raw string returned by the server ("direct" | "reasoning").
+    /// Convert the raw string returned by the server.
     /// Anything not recognised defaults to `Reasoning` (safe fail-closed).
     fn from_str(s: &str) -> Self {
-        if s.trim().eq_ignore_ascii_case("direct") {
+        let value = s.trim().to_lowercase();
+        if value == "direct" {
             RouteDecision::Direct
+        } else if value == "metadata" {
+            RouteDecision::Metadata
         } else {
             RouteDecision::Reasoning
         }

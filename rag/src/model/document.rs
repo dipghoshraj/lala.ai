@@ -71,5 +71,28 @@ impl Document {
         let mut client = db.client();
         let row = client.query_one("SELECT COUNT(*) FROM documents", &[])?;
         Ok(row.get::<_, i64>(0) as usize)
-    }    
+    }
+
+    pub fn count_by_project(project_id: &str) -> anyhow::Result<usize> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        let row = client.query_one(crate::model::sql::SELECT_DOCUMENT_COUNT_BY_PROJECT, &[&project_id])?;
+        Ok(row.get::<_, i64>(0) as usize)
+    }
+
+    pub fn fetch_by_project(project_id: &str) -> anyhow::Result<Vec<Self>> {
+        let db = crate::model::db();
+        let mut client = db.client();
+        let rows = client.query(crate::model::sql::SELECT_DOCUMENTS_BY_PROJECT, &[&project_id])?;
+        Ok(rows
+            .into_iter()
+            .map(|row| Self {
+                id: row.get(0),
+                title: row.get(1),
+                source: row.get(2),
+                created_at: row.get(3),
+                project_id: row.get(4),
+            })
+            .collect())
+    }
 }

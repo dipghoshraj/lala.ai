@@ -254,7 +254,7 @@ flowchart TD
 | `direct` | final answer only | Greetings, simple factual questions, short conversational replies |
 | `reasoning` | reasoning + final answer | Analysis, code, comparisons, multi-step questions |
 
-**lala CLI:** enable LLM classification with `LALA_SMART_ROUTER=1`. Default uses the local heuristic (no extra network call).
+**lala CLI:** smart routing is enabled by default. Set `LALA_SMART_ROUTER=0` to disable LLM-based query classification and fall back to the local heuristic.
 
 **Telegram bot:** enable with `SMART_ROUTER=1` in `.env`. Default routes every message through the full reasoning pipeline.
 
@@ -390,7 +390,7 @@ Notes:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LLML_API_URL` | `http://localhost:3000` | LLML server URL (overridden by CLI arg) |
-| `LALA_SMART_ROUTER` | `0` | Set to `1` to enable LLM-based query classification |
+| `LALA_SMART_ROUTER` | enabled | Set to `0` to disable LLM-based query classification |
 
 ### LLML (Python inference server)
 

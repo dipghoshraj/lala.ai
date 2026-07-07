@@ -383,7 +383,13 @@ async def classify_query(
 
         try:
             raw = await runner.generate(prompt, max_tokens=5, temperature=0.0)
-            route = "reasoning" if "REASON" in raw.strip().upper() else "direct"
+            normalized = raw.strip().upper()
+            if "METADATA" in normalized:
+                route = "metadata"
+            elif "REASON" in normalized:
+                route = "reasoning"
+            else:
+                route = "direct"
             confidence = "llm"
             logger.info(
                 "classify llm  model=%s  route=%s  raw=%r  query_len=%d",

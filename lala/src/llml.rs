@@ -45,12 +45,50 @@ pub fn allocate_available_ports(count: usize) -> anyhow::Result<Vec<u16>> {
 
 pub fn start_llml_docker(port: u16) -> anyhow::Result<()> {
     let port_mapping = format!("{port}:3000");
+
+    let models_dir = std::env::var("MODELS_DIR").unwrap_or_else(|_| "D:/models".to_string());
+    let config_path = std::env::var("CONFIG_PATH").unwrap_or_else(|_| "./ai-config.yaml".to_string());
+
+    let models_path = std::path::PathBuf::from(&models_dir);
+    let models_path = if models_path.is_absolute() {
+        models_path
+    } else {
+        std::env::current_dir()?.join(models_path)
+    };
+
+    let config_path = std::path::PathBuf::from(&config_path);
+    let config_path = if config_path.is_absolute() {
+        config_path
+    } else {
+        std::env::current_dir()?.join(config_path)
+    };
+
+    fn docker_path(path: &std::path::Path) -> String {
+        let mut s = path.to_string_lossy().to_string();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            s = stripped.to_string();
+        }
+        if let Some(stripped) = s.strip_prefix("//?/") {
+            s = stripped.to_string();
+        }
+        s.replace('\\', "/")
+    }
+
+    let models_mapping = format!("{}:/models:ro", docker_path(&models_path));
+    let config_mapping = format!("{}:/app/ai-config.yaml:ro", docker_path(&config_path));
+
     let output = Command::new("docker")
         .arg("run")
         .arg("-d")
         .arg("--rm")
         .arg("-p")
         .arg(&port_mapping)
+        .arg("-v")
+        .arg("lala-llml-data:/app/data")
+        .arg("-v")
+        .arg(&models_mapping)
+        .arg("-v")
+        .arg(&config_mapping)
         .arg("dipghoshraj/llml:latest")
         .output()?;
 
