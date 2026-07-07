@@ -313,12 +313,9 @@ impl<'a> Chat<'a> {
 
         match self.agent.run_metadata_stream(&self.history, &metadata) {
             Ok(stream) => match display::print_section_stream("Answer", display::BOLD_CYAN, display::CYAN, stream) {
-                Ok(reply) => {
-                    self.history.push(ChatMessage {
-                        role: "assistant".to_string(),
-                        content: reply,
-                    });
-                    self.preserve_current_history();
+                Ok(_reply) => {
+                    // Discard metadata queries and their replies from session history.
+                    self.history.pop(); // user query
                 }
                 Err(e) => {
                     display::error(&format!("Error streaming answer: {e}"));

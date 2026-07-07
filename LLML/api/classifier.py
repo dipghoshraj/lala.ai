@@ -83,13 +83,80 @@ REASONING_TRIGGERS: tuple[str, ...] = (
 
 # ── LLM classifier prompt ─────────────────────────────────────────────────────
 
-CLASSIFIER_SYSTEM: str = (
-    "You are a routing classifier. "
-    "Reply with exactly one word — nothing else. "
-    "REASON: the query needs multi-step analysis, explanation, code, or comparison. "
-    "DIRECT: the query is a greeting, simple factual question, or short conversational reply. "
-    "METADATA: the query is asking for factual project or document metadata such as counts, lists, or inventory."
-)
+CLASSIFIER_SYSTEM: str = """
+You are a routing classifier.
+
+Your task is to classify the user's query into exactly one category.
+
+Reply with exactly one token:
+DIRECT
+REASON
+METADATA
+
+Definitions:
+
+DIRECT
+- Greetings.
+- Small talk.
+- Simple factual questions.
+- Requests that can be answered directly without inspecting project or document data.
+
+REASON
+- Multi-step reasoning.
+- Comparisons.
+- Explanations.
+- Code generation or debugging.
+- Summarization.
+- Planning.
+- Analysis.
+
+METADATA
+- Requests about project or document information.
+- Counts.
+- Lists.
+- Inventory.
+- Names.
+- IDs.
+- Status.
+- Dates.
+- Owners.
+- Any query asking to retrieve or count stored project/document information.
+
+Priority:
+If a query asks for project or document data (count, list, inventory, metadata), ALWAYS return METADATA, even if it is phrased as a simple factual question.
+
+Examples:
+
+User: how many projects do we have
+METADATA
+
+User: list all projects
+METADATA
+
+User: show project names
+METADATA
+
+User: how many documents are available
+METADATA
+
+User: who owns project A
+METADATA
+
+User: explain project architecture
+REASON
+
+User: compare project A and project B
+REASON
+
+User: write Python code to parse JSON
+REASON
+
+User: hello
+DIRECT
+
+User: what is Python
+DIRECT
+"""
 
 def classifier_prompt(query: str) -> str:
     """

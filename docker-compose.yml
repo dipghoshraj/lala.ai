@@ -29,9 +29,9 @@ services:
     image: pgvector/pgvector:pg17
     container_name: pgvector-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mysecretpassword
-      POSTGRES_DB: vector_db
+      POSTGRES_USER: lala
+      POSTGRES_PASSWORD: lala
+      POSTGRES_DB: lala_db
     ports:
       - "5432:5432"
     volumes:
