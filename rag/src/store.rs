@@ -141,4 +141,14 @@ impl RagStore {
         let docs = document::Document::fetch_by_project(&project_id)?;
         Ok(docs)
     }
+
+    pub fn document_count_for_project(&self, project_id: &str) -> Result<usize> {
+        let count = document::Document::count_by_project(project_id)?;
+        Ok(count)
+    }
+
+    pub fn documents_for_project(&self, project_id: &str) -> Result<Vec<document::Document>> {
+        let docs = document::Document::fetch_by_project(project_id)?;
+        Ok(docs)
+    }
 }

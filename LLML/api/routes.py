@@ -255,29 +255,32 @@ async def chat_completions(
         max_tokens = req.max_tokens if req.max_tokens is not None else runner.max_tokens_default
         temperature = req.temperature
         slid = slide_messages(req.messages, runner.n_ctx, max_tokens)
+        content = await runner.generate(
+            messages=[m.model_dump() for m in slid],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
         prompt = build_prompt(slid)
-        content = await runner.generate(prompt, max_tokens, temperature)
-
-    return JSONResponse(
-        {
-            "id": response_id,
-            "object": "chat.completion",
-            "created": created,
-            "model": resolved_model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": content},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": _estimate_tokens(prompt),
-                "completion_tokens": _estimate_tokens(content),
-                "total_tokens": _estimate_tokens(prompt) + _estimate_tokens(content),
-            },
-        }
-    )
+        return JSONResponse(
+            {
+                "id": response_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": resolved_model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": content},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": _estimate_tokens(prompt),
+                    "completion_tokens": _estimate_tokens(content),
+                    "total_tokens": _estimate_tokens(prompt) + _estimate_tokens(content),
+                },
+            }
+        )
 
 
 async def _stream_chat_response(
@@ -299,34 +302,33 @@ async def _stream_chat_response(
             else runner.max_tokens_default
         )
         slid = slide_messages(messages, runner.n_ctx, max_tokens)
-        prompt = build_prompt(slid)
         async for token in _stream_sse(
             runner,
-            prompt,
-            max_tokens,
-            temperature,
-            response_id,
-            resolved_model,
-            created,
+            messages=[m.model_dump() for m in slid],
+            max_tokens=max_tokens,
+            temperature=temperature,
+            response_id=response_id,
+            resolved_model=resolved_model,
+            created=created,
         ):
             yield token
 
 
 async def _stream_sse(
     runner,
-    prompt: str,
+    messages: list[dict[str, str]] | None,
     max_tokens: int,
     temperature: float | None,
     response_id: str,
-    model: str,
+    resolved_model: str,
     created: int,
 ) -> AsyncIterator[str]:
-    async for token in runner.stream(prompt, max_tokens, temperature):
+    async for token in runner.stream(messages=messages, max_tokens=max_tokens, temperature=temperature):
         chunk = {
             "id": response_id,
             "object": "chat.completion.chunk",
             "created": created,
-            "model": model,
+            "model": resolved_model,
             "choices": [
                 {
                     "index": 0,
@@ -341,7 +343,7 @@ async def _stream_sse(
         "id": response_id,
         "object": "chat.completion.chunk",
         "created": created,
-        "model": model,
+        "model": resolved_model,
         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
     }
     yield f"data: {json.dumps(stop_chunk)}\n\n"
@@ -386,7 +388,11 @@ async def classify_query(
         logger.info("prompt for classification: %r, system=%r, query=%r", prompt, CLASSIFIER_SYSTEM, query)
 
         try:
-            raw = await runner.generate(prompt, max_tokens=4, temperature=0.0)
+            raw = await runner.generate(
+                messages=[m.model_dump() for m in classify_messages],
+                max_tokens=4,
+                temperature=0.0,
+            )
             normalized = raw.strip().upper()
             if "METADATA" in normalized:
                 route = "metadata"

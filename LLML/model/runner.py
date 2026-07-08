@@ -19,7 +19,7 @@ import logging
 import os
 import threading
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Optional, cast
 
 from llama_cpp import Llama
 
@@ -33,6 +33,8 @@ _STOP_SENTINEL: object = object()
 
 class ModelRunner:
     """Owns a loaded Llama model. Instantiate once at startup; reuse for every request."""
+
+    _model: Optional[Llama] = None
 
     def __init__(self, model_path: str, params: ModelParams) -> None:
         # Resolve thread counts: 0 in config → use all available cores.
@@ -60,7 +62,7 @@ class ModelRunner:
             n_batch=params.n_batch,
             use_mlock=params.use_mlock,
             verbose=False,
-            embedding= params.embedding,
+            embedding=params.embedding,
         )
         self._params = params
         logger.info("model loaded successfully  path=%s", model_path)
@@ -77,6 +79,35 @@ class ModelRunner:
         self._model = None
         gc.collect()
 
+    def _call_completion(
+        self,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> Any:
+        assert self._model is not None
+        return self._model(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stop=["[/INST]"],
+            echo=False,
+        )
+
+    def _call_chat_completion(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        temperature: float,
+    ) -> Any:
+        assert self._model is not None
+        return self._model.create_chat_completion(
+            messages=cast(Any, messages),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=False,
+        )
+
     # ── Properties ───────────────────────────────────────────────────────────
 
     @property
@@ -91,28 +122,57 @@ class ModelRunner:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> str:
         """Non-streaming inference.
 
         Delegates to asyncio.to_thread so the event loop is never blocked.
-        Stop token ``[/INST]`` prevents the model from echoing the prompt
-        template — identical to the early-stop logic in the Rust implementation.
+        If structured chat messages are provided, use llama_cpp's chat completion
+        path so the model can format prompts from metadata and chat templates.
         """
         mt = max_tokens if max_tokens is not None else self._params.max_tokens
         temp = temperature if temperature is not None else self._params.temperature
 
-        result: dict[str, Any] = await asyncio.to_thread(
-            self._model,
-            prompt,
-            max_tokens=mt,
-            temperature=temp,
-            stop=["[/INST]"],
-            echo=False,
-        )
-        content: str = result["choices"][0]["text"].strip()
+        if messages is not None:
+            result = cast(
+                dict[str, Any],
+                await asyncio.to_thread(
+                    self._call_chat_completion,
+                    messages,
+                    mt,
+                    temp,
+                ),
+            )
+            choice = result["choices"][0]
+            if isinstance(choice, dict):
+                message = choice.get("message")
+                if isinstance(message, dict):
+                    content = message.get("content", "")
+                else:
+                    content = choice.get("text", "")
+            else:
+                content = ""
+            content = str(content).strip()
+        else:
+            assert prompt is not None, "prompt must be provided when messages is None"
+            result = cast(
+                dict[str, Any],
+                await asyncio.to_thread(
+                    self._call_completion,
+                    prompt,
+                    mt,
+                    temp,
+                ),
+            )
+            content = ""
+            choice = result["choices"][0]
+            if isinstance(choice, dict):
+                content = choice.get("text", "")
+            content = str(content).strip()
+
         logger.info(
             "inference complete  model=%s  output_len=%d",
             self._params,
@@ -128,7 +188,8 @@ class ModelRunner:
 
 
         try:
-            result = await asyncio.to_thread(self._model.embed, text)
+            assert self._model is not None
+            result: Any = await asyncio.to_thread(self._model.embed, text)
             if isinstance(result, dict) and "data" in result:
                 data = result["data"]
                 if isinstance(data, list) and len(data) > 0:
@@ -140,14 +201,15 @@ class ModelRunner:
             return []
         except AttributeError:
             logger.warning("Model runner has no embed(), using deterministic fallback")
-            return ArithmeticError("Embedding not supported by this model")
+            return []
         except Exception as exc:
             logger.warning("Embedding call failed: %s", exc)
-            return ArithmeticError(f"Embedding failed: {exc}")
+            return []
 
     async def stream(
         self,
-        prompt: str,
+        prompt: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> AsyncIterator[str]:
@@ -165,16 +227,43 @@ class ModelRunner:
 
         def _run() -> None:
             try:
-                for chunk in self._model(
-                    prompt,
-                    max_tokens=mt,
-                    temperature=temp,
-                    stop=["[/INST]"],
-                    echo=False,
-                    stream=True,
-                ):
-                    token: str = chunk["choices"][0]["text"]
-                    asyncio.run_coroutine_threadsafe(queue.put(token), loop).result()
+                if messages is not None:
+                    assert self._model is not None
+                    iterator = self._model.create_chat_completion(
+                        messages=cast(Any, messages),
+                        max_tokens=mt,
+                        temperature=temp,
+                        stream=True,
+                    )
+                    for chunk in iterator:
+                        if isinstance(chunk, dict):
+                            choice = chunk["choices"][0]
+                            if isinstance(choice, dict):
+                                delta = choice.get("delta", {})
+                                token = delta.get("content") if isinstance(delta, dict) else None
+                            else:
+                                token = None
+                        else:
+                            token = None
+                        if token is not None:
+                            asyncio.run_coroutine_threadsafe(queue.put(token), loop).result()
+                else:
+                    assert prompt is not None, "prompt must be provided when messages is None"
+                    assert self._model is not None
+                    for chunk in self._model(
+                        prompt,
+                        max_tokens=mt,
+                        temperature=temp,
+                        stop=["[/INST]"],
+                        echo=False,
+                        stream=True,
+                    ):
+                        if isinstance(chunk, dict):
+                            inner = chunk["choices"][0]
+                            token = inner.get("text", "") if isinstance(inner, dict) else ""
+                        else:
+                            token = ""
+                        asyncio.run_coroutine_threadsafe(queue.put(token), loop).result()
             except Exception as exc:  # noqa: BLE001
                 asyncio.run_coroutine_threadsafe(queue.put(exc), loop).result()
             finally:

@@ -22,6 +22,9 @@ const MIN_RAG_FETCH_LIMIT: usize = 5;
 /// Maximum chunk results to retrieve to avoid excessive query payload.
 const MAX_RAG_FETCH_LIMIT: usize = 200;
 
+/// Maximum metadata document rows to emit per project.
+const MAX_METADATA_PROJECT_DOCUMENTS: usize = 20;
+
 /// Limit retrieved chunks to fit within a token budget.
 /// Returns the chunks that fit, ordered by relevance (highest first).
 pub fn limit_chunks_by_tokens(chunks: Vec<rag::model::chunk::ChunkRow>, max_tokens: usize) -> Vec<rag::model::chunk::ChunkRow> {
@@ -373,26 +376,35 @@ impl<'a> Agent<'a> {
             }
         }
 
-        if lower.contains("project") {
-            let total_projects = self.store.project_count()?;
-            facts.push(format!("total_projects: {}", total_projects));
-
-            if lower.contains("what projects") || lower.contains("list projects") || lower.contains("projects i have") {
-                let projects = Project::fetch_all()?;
-                if projects.is_empty() {
-                    facts.push("projects: none".to_string());
-                } else {
-                    facts.push("projects:".to_string());
-                    for project in projects {
-                        facts.push(format!("- {} ({})", project.name, project.id));
-                    }
-                }
-            }
+        let projects = Project::fetch_all()?;
+        if projects.is_empty() {
+            facts.push("metadata: no project or document facts available for this query".to_string());
+            return Ok(facts.join("\n"));
         }
 
-        if lower.contains("how many documents") && self.store.current_project_id().is_none() {
-            let total_docs = self.store.document_count()?;
-            facts.push(format!("total_documents: {}", total_docs));
+        facts.push(format!("total_projects: {}", projects.len()));
+
+        for project in projects {
+            facts.push(format!("project_name: {}", project.name));
+            facts.push(format!("project_id: {}", project.id));
+            if !project.description.is_empty() {
+                facts.push(format!("project_description: {}", project.description));
+            }
+
+            let project_docs = self.store.documents_for_project(&project.id)?;
+            facts.push(format!("project_document_count: {}", project_docs.len()));
+
+            if project_docs.is_empty() {
+                facts.push("project_documents: zero documents present".to_string());
+            } else {
+                facts.push("project_documents:".to_string());
+                for doc in project_docs.iter().take(MAX_METADATA_PROJECT_DOCUMENTS) {
+                    facts.push(format!("- {} ({})", doc.title, doc.source));
+                }
+                if project_docs.len() > MAX_METADATA_PROJECT_DOCUMENTS {
+                    facts.push(format!("and {} more documents present", project_docs.len() - MAX_METADATA_PROJECT_DOCUMENTS));
+                }
+            }
         }
 
         if facts.is_empty() {
