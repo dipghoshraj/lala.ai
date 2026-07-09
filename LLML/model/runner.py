@@ -53,6 +53,8 @@ class ModelRunner:
             params.use_mlock,
         )
 
+        model_path = f"/models/{model_path}"
+
         self._model = Llama(
             model_path=model_path,
             n_gpu_layers=params.n_gpu_layers,

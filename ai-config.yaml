@@ -20,8 +20,8 @@ chroma:
 
 # Chat/classification models. These are loaded on demand, one at a time.
 work_models:
-  - name: "mistral-work"
-    model_path: "/models/qwen2.5-3b-instruct-q4_k_m.gguf"
+  - name: "qwen-work"
+    model_path: "qwen2.5-3b-instruct-q4_k_m.gguf"
     params:
       temperature: 0.7
       max_tokens: 4000
@@ -33,7 +33,7 @@ work_models:
       use_mlock: 1
 
   - name: "deepseek-work"
-    model_path: "/models/deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
+    model_path: "deepseek-coder-1.3b-instruct.Q4_K_M.gguf"
     params:
       temperature: 0.7
       max_tokens: 4000
@@ -47,7 +47,7 @@ work_models:
 # Embedding model. Loaded only for embedding requests.
 embedding_model:
   name: "bge-embedding"
-  model_path: "/models/bge-small-en-v1.5-q4_k_m.gguf"
+  model_path: "bge-small-en-v1.5-q4_k_m.gguf"
   params:
     n_gpu_layers: 0
     n_threads: 0
