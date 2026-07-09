@@ -6,7 +6,6 @@ Rust-based local **Agentic RAG** system. Three components communicate over HTTP:
 
 - **`lala`** — interactive CLI client (Rust: terminal REPL, conversation history, spinner)
 - **`LLML`** — local LLM inference server (Python/FastAPI: loads GGUF models, serves OpenAI-compatible API)
-- **`telegram`** — Telegram bot client (Python: classify → route → spoiler-formatted reply)
 - **`rag`** — standalone RAG library crate (Rust: PostgreSQL FTS + pgvector, keyword + vector retrieval)
 
 The project uses a **Cargo workspace** (`lala.ai/Cargo.toml`) with members `lala` and `rag`. PostgreSQL + pgvector is the RAG storage engine: `chunks` table with `tsvector` GIN index for keyword retrieval, `chunk_embeddings` table with `vector(384)` IVFFlat index for semantic search.

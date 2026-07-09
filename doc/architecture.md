@@ -1,6 +1,6 @@
 # lala.ai — System Architecture
 
-> **Current state:** Phase 0 complete — five-layer architecture (Interface → Agent → RAG → Model + DB). `lala` Rust CLI + `LLML` Python inference server + `telegram` Python bot connected over HTTP. RAG retrieval is **live** on every query via PostgreSQL FTS (`tsvector` + GIN) + pgvector (`vector(384)` IVFFlat) + memory blocks. LLML serves an OpenAI-compatible API with configurable work models and a query-classification endpoint (`/v1/classify`).
+> **Current state:** Phase 0 complete — five-layer architecture (Interface → Agent → RAG → Model + DB). `lala` Rust CLI + `LLML` Python inference server connected over HTTP. RAG retrieval is **live** on every query via PostgreSQL FTS (`tsvector` + GIN) + pgvector (`vector(384)` IVFFlat) + memory blocks. LLML serves an OpenAI-compatible API with configurable work models and a query-classification endpoint (`/v1/classify`).
 
 ---
 
@@ -47,16 +47,7 @@ lala.ai/
 │   └── api/
 │       ├── routes.py       # Router: /v1/chat/completions, /v1/models, /v1/classify
 │       └── classifier.py   # Shared heuristic + CLASSIFIER_SYSTEM prompt constant
-└── telegram/               # Telegram bot client
-    ├── app.py              # Entry point — wires handlers, starts long-polling
-    ├── config.py           # Config from environment variables (incl. SMART_ROUTER)
-    ├── requirements.txt
-    ├── agent/
-│   ├── client.py       # LLMLClient — reason(), decide(), classify()
-│   └── conversation.py # Per-user rolling conversation history (thread-safe)
-    └── bot/
-        ├── handlers.py     # Pipeline: classify → direct | reason→decide; spoiler formatting
-        └── middleware.py   # Auth guard
+
 ```
 
 ---
@@ -66,9 +57,7 @@ lala.ai/
 ```mermaid
 graph TD
     User["👤 User (terminal)"]
-    TGUser["👤 User (Telegram)"]
     Lala["lala\nRust CLI"]
-    TGBot["telegram/\nPython bot"]
     LLML["LLML\nPython/FastAPI\n:3000"]
     Config["ai-config.yaml\n(default_work_model + work_models)"]
     GGUF["*.gguf model files\n(local filesystem)"]
@@ -82,12 +71,6 @@ graph TD
     Lala -->|"POST /v1/chat/completions {model:'decision'}"| LLML
     LLML -->|"JSON responses"| Lala
     Lala -->|"print reply"| User
-
-    TGUser -->|"Telegram message"| TGBot
-    TGBot -->|"POST /v1/classify"| LLML
-    TGBot -->|"POST /v1/chat/completions"| LLML
-    LLML -->|"JSON responses"| TGBot
-    TGBot -->|"reply (spoiler + answer)"| TGUser
 
     Config -->|"read on startup"| LLML
     GGUF -->|"mmap via llama-cpp-python"| Registry
@@ -362,7 +345,7 @@ impl<'a> Agent<'a> {
 
 `classify_query` calls `client.classify()` and falls back to `needs_reasoning()` on error. `cli.rs` branches on the returned `RouteDecision` to pick the direct or reasoning path.
 
-The reasoning output (`analysis`) is displayed to the user in the CLI under a `▷ Reasoning` section with yellow ANSI colouring. In the Telegram bot it is wrapped in a `<tg-spoiler>` so users can tap to reveal it.
+The reasoning output (`analysis`) is displayed to the user in the CLI under a `▷ Reasoning` section with yellow ANSI colouring.
 
 ---
 
@@ -547,7 +530,7 @@ curl -s http://localhost:3000/v1/chat/completions \
 
 ### POST `/v1/classify`
 
-Classifies a query as requiring reasoning or a direct answer. Used by `lala` CLI (when `LALA_SMART_ROUTER=1`) and by the Telegram bot (when `SMART_ROUTER=1`).
+Classifies a query as requiring reasoning or a direct answer. Used by `lala` CLI (when `LALA_SMART_ROUTER=1`).
 
 **Request:**
 ```json
@@ -690,7 +673,7 @@ flowchart TD
 | Per-request temperature (server) | Wired through request/response ✅ |
 | Two-step agent loop | `Agent::run_reasoning()` + `run_decision()` with context injection ✅ |
 | Query routing | `POST /v1/classify` + `RouteDecision` + `LALA_SMART_ROUTER` ✅ |
-| Telegram bot | classify → direct | reason→decide + spoiler formatting + context injection ✅ |
+
 | Document ingestion | `/ingest`, `/ingest-file`, `/ingest-news` CLI commands ✅ |
 | Keyword retrieval | `/search`, `/memory-search` CLI commands (BM25 via PostgreSQL FTS) ✅ |
 | Context injection | Auto-retrieve top-5 chunks + memory blocks, inject into system prompt on every query ✅ |
@@ -728,9 +711,3 @@ flowchart TD
 | `pyyaml` | `ai-config.yaml` parsing |
 | `uuid` | Response IDs |
 
-### Telegram bot (Python)
-| Package | Purpose |
-|---------|--------|
-| `python-telegram-bot` | Telegram API client + async long-polling |
-| `requests` | Blocking HTTP client for LLML API |
-| `python-dotenv` | Load `.env` files into environment |

@@ -4,7 +4,6 @@ A local **Agentic RAG** system built in Rust and Python. Two services communicat
 
 - **`lala`** — interactive Rust CLI (terminal REPL, conversation history, braille spinner)
 - **`LLML`** — local LLM inference server (Python/FastAPI, loads GGUF models, OpenAI-compatible API)
-- **`telegram/`** — Telegram bot client (Python, same inference pipeline over HTTP)
 
 PostgreSQL + pgvector is provisioned for RAG storage and is active in the current implementation.
 
@@ -19,7 +18,6 @@ PostgreSQL + pgvector is provisioned for RAG storage and is active in the curren
 `lala.ai` is an agentic RAG system that combines:
 - `lala` (Rust CLI): local REPL with query routing (`direct` vs `reasoning`), document search, and ingestion workflow
 - `LLML` (Python FastAPI): GGUF model inference (`/v1/chat/completions`, `/v1/classify`, `/v1/embeddings`, `/v1/models`)
-- `telegram` bot (optional): same pipeline exposed via Telegram
 
 It routes questions through a direct answer path for simple queries, or a reasoning + answer path for more complex queries.
 
@@ -108,16 +106,7 @@ If you are using PostgreSQL from Docker Compose or `lala serve`, set `DATABASE_U
 DATABASE_URL=postgres://postgres:mysecretpassword@localhost:5432/vector_db cargo run
 ```
 
-### 3. (Optional) Telegram bot
-
-```sh
-cd telegram
-pip install -r requirements.txt
-cp .env.example .env                    # set TOKEN, USERID, LLML_API_URL
-python app.py
-```
-
-### 4. (Optional) PostgreSQL + pgvector
+### 3. (Optional) PostgreSQL + pgvector
 
 The `db` service in `docker-compose.yml` already provisions PostgreSQL with `pgvector`.
 If you want a standalone PostgreSQL container instead of Compose, you can still build from `psql.Dockerfile`:
@@ -170,16 +159,6 @@ lala.ai/
 │   └── api/
 │       ├── routes.py       # FastAPI router: /v1/chat/completions, /v1/models, /v1/classify
 │       └── classifier.py   # Shared heuristic + LLM classifier logic
-└── telegram/               # Telegram bot
-    ├── app.py              # Entry point — wires handlers and starts long-polling
-    ├── config.py           # Config from environment variables
-    ├── requirements.txt
-    ├── agent/
-    │   ├── client.py       # LLMLClient — HTTP wrapper (reason, decide, classify)
-    │   └── conversation.py # Per-user rolling conversation history
-    └── bot/
-        ├── handlers.py     # Message pipeline: classify → direct or reason→decide
-        └── middleware.py   # Auth guard
 ```
 
 ---
@@ -189,16 +168,11 @@ lala.ai/
 ```mermaid
 flowchart TD
     User(["👤 User\nstdin / rustyline"])
-    TGUser(["👤 User\nTelegram"])
 
     subgraph lala ["lala — Rust CLI"]
         CLI["cli.rs\nREPL loop · LALA_SMART_ROUTER"]
         Planner["agent/planner.rs\nclassify_query()\nrun_direct() | run_reasoning()+run_decision()"]
         ApiClient["agent/model.rs\nApiClient\nreqwest::blocking"]
-    end
-
-    subgraph TGBot ["telegram — Python bot"]
-        TGClient["agent/client.py\nLLMLClient"]
     end
 
     subgraph LLML ["LLML — Python/FastAPI :3000"]
@@ -219,8 +193,6 @@ flowchart TD
     Runner -->|"llama-cpp-python FFI"| GGUF
     Config -->|"read on startup"| LLML
 
-    TGUser --> TGClient
-    TGClient -->|"HTTP"| Routes
 ```
 
 ---
@@ -260,8 +232,6 @@ flowchart TD
 **lala CLI:** smart routing is enabled by default. Set `LALA_SMART_ROUTER=0` to disable LLM-based query classification and fall back to the local heuristic.
 
 **LLML server:** set `LLML_CLASSIFIER_SKIP_LLM=1` to skip model loading for queries that `heuristic_route()` classifies as `direct`.
-
-**Telegram bot:** enable with `SMART_ROUTER=1` in `.env`. Default routes every message through the full reasoning pipeline.
 
 ---
 
@@ -405,18 +375,6 @@ Notes:
 |----------|---------|-------------|
 | `RUST_LOG` | `info` | Log level |
 
-### Telegram bot
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TOKEN` | yes | Telegram bot token |
-| `USERID` | yes | Authorized user ID |
-| `LLML_API_URL` | no | LLML server URL (default `http://localhost:3000`) |
-| `SMART_ROUTER` | no | Set to `1` to enable LLM-based classification |
-| `REASONING_MAX_TOKENS` | no | Default `512` |
-| `DECISION_MAX_TOKENS` | no | Default `256` |
-| `MAX_HISTORY_TURNS` | no | Default `10` |
-
 ---
 
 ## Phase Roadmap
@@ -451,15 +409,6 @@ Notes:
 | `pyyaml` | Config deserialization |
 | `pydantic` | Request/response validation |
 
-### Telegram bot (Python)
-
-| Package | Purpose |
-|---------|---------|
-| `python-telegram-bot` | Bot framework |
-| `requests` | Blocking HTTP client for LLML |
-| `python-dotenv` | `.env` loading |
-
----
 
 ## Key Conventions
 

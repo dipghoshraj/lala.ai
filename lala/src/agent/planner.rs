@@ -248,7 +248,7 @@ impl<'a> Agent<'a> {
             None => base.clone(),
         };
         let planning_history = Self::replace_system(history, &system);
-        self.client.chat_stream(&planning_history, Some(512), Some(0.0), None)
+        self.client.chat_stream(&planning_history, Some(2000), Some(0.0), None)
     }
 
     /// Ask the LLML server to classify the query via `POST /v1/classify`.
