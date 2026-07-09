@@ -43,7 +43,27 @@ pub fn allocate_available_ports(count: usize) -> anyhow::Result<Vec<u16>> {
     Ok(ports)
 }
 
+fn ensure_docker_available() -> anyhow::Result<()> {
+    let output = Command::new("docker").arg("-v").output();
+    match output {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Err(anyhow::anyhow!(
+                "Docker is not available or failed to respond to 'docker -v'.\n{}{}\nPlease make sure Docker is installed and the Docker daemon is running.",
+                stdout,
+                stderr
+            ))
+        }
+        Err(err) => Err(anyhow::anyhow!(
+            "Unable to execute 'docker -v': {err}. Please install Docker and make sure the Docker CLI is available in your PATH, then start Docker.",
+        )),
+    }
+}
+
 pub fn start_llml_docker(port: u16, models_dir: &str) -> anyhow::Result<()> {
+    ensure_docker_available()?;
     let port_mapping = format!("{port}:3000");
 
     let config_path_env = std::env::var("CONFIG_PATH").ok();
@@ -140,6 +160,7 @@ pub fn start_llml_docker(port: u16, models_dir: &str) -> anyhow::Result<()> {
 }
 
 pub fn start_postgres_docker(port: u16, user: &str, password: &str, db_name: &str) -> anyhow::Result<()> {
+    ensure_docker_available()?;
     let port_mapping = format!("{port}:5432");
     let output = Command::new("docker")
         .arg("run")
