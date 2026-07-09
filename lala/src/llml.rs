@@ -143,7 +143,7 @@ pub fn start_llml_docker(port: u16, models_dir: &str) -> anyhow::Result<()> {
         .arg(&models_mapping)
         .arg("-v")
         .arg(&config_mapping)
-        .arg("dipghoshraj/llml:0.0.1")
+        .arg("dipghoshraj/llml:0.0.2")
         .output()?;
 
     if output.status.success() {
