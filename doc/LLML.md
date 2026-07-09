@@ -307,7 +307,7 @@ Heuristic rules:
 4. ≤ 8 words without trigger → `direct`
 5. Longer queries → `reasoning`
 
-If LLM classification runs, it expects the model to respond with `REASON` or `DIRECT`.
+If LLM classification runs, it expects the model to respond with `REASON`, `DIRECT`, or `METADATA`.
 
 ---
 

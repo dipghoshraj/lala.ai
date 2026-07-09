@@ -121,7 +121,7 @@ URL resolution order:
 2. `LLML_API_URL` environment variable
 3. Fallback: `http://localhost:3000`
 
-`main()` also reads `LALA_SMART_ROUTER` (enabled by default; set to "0" to disable LLM-based classification) and `DATABASE_URL` (libpq connection string; default matches the `docker-compose.yml` `db` service). When `lala serve` is used, service URLs are persisted to a temp file `lala-serve-env.json` and may be consumed by subsequent CLI runs. `RagStore::open()` is called before `cli::run()` and runs any pending migrations automatically.
+`main()` also reads `LALA_SMART_ROUTER` (enabled by default; set to "0" to disable LLM-based classification) and `DATABASE_URL` (libpq connection string; default matches the `docker-compose.yml` `db` service). When `lala serve` is used, service URLs are persisted to a temp file `lala-serve-env.json` and may be consumed by subsequent CLI runs. The database is initialized with `rag::model::init_db(&database_url)` and migrations are applied before `cli::run()`.
 
 ---
 
@@ -227,7 +227,7 @@ The entire vector is sent on every request so the model maintains multi-turn con
 | `chat(&msgs, max_tokens, None)` | `POST /v1/chat/completions` | Server picks first registered model |
 | `reason(&msgs, max_tokens)` | `POST /v1/chat/completions` | `model: "reasoning"`, temp 0.7 |
 | `decide(&msgs, max_tokens)` | `POST /v1/chat/completions` | `model: "decision"`, temp 0.3 |
-| `classify(query, context)` | `POST /v1/classify` | Returns `RouteDecision::{Direct,Reasoning}` |
+    | `classify(query, context)` | `POST /v1/classify` | Returns `RouteDecision::{Direct,Reasoning,Metadata}` |
 
 `planner.rs` exposes `Agent::classify_query(input, history)` which wraps `client.classify()` with a local `needs_reasoning()` heuristic fallback. `cli.rs` calls the method when `smart_router=true`, otherwise resolves directly via `needs_reasoning()`.
 
@@ -617,7 +617,7 @@ The `ApiClient` struct is the sole boundary between `lala` and `LLML`. It uses `
 | `chat(messages, max_tokens, model_role)` | `/v1/chat/completions` | Core — sends full history, returns reply string |
 | `reason(messages, max_tokens)` | `/v1/chat/completions` | Shortcut — selects `ModelRole::Reasoning` |
 | `decide(messages, max_tokens)` | `/v1/chat/completions` | Shortcut — selects `ModelRole::Decision` |
-| `classify(query, context)` | `/v1/classify` | Returns `RouteDecision::{Direct,Reasoning}` |
+| `classify(query, context)` | `/v1/classify` | Returns `RouteDecision::{Direct,Reasoning,Metadata}` |
 
 `RouteDecision::from_str()` maps the `"route"` string from the server response to the enum, defaulting to `Reasoning` on any unrecognised value (fail-closed).
 

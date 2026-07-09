@@ -235,7 +235,7 @@ Wraps a `reqwest::blocking::Client` configured with **no timeout** — CPU infer
 | `chat(messages, max_tokens, model)` | `/v1/chat/completions` | Core call — sends full history, returns reply string |
 | `reason(messages, max_tokens)` | `/v1/chat/completions` | Shortcut with `model: "reasoning"` |
 | `decide(messages, max_tokens)` | `/v1/chat/completions` | Shortcut with `model: "decision"` |
-| `classify(query, context)` | `/v1/classify` | Returns `RouteDecision::{Direct,Reasoning}` |
+| `classify(query, context)` | `/v1/classify` | Returns `RouteDecision::{Direct,Reasoning,Metadata}` |
 
 ### `ChatMessage`
 

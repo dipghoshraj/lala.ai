@@ -245,14 +245,17 @@ flowchart TD
     Heuristic -->|"direct"| Direct
     LLM -->|"direct"| Direct
     LLM -->|"reasoning"| Reason
+    LLM -->|"metadata"| Metadata
     Direct --> Out
     Reason --> Out
+    Metadata --> Out
 ```
 
 | Route | Path | Use case |
 |-------|------|----------|
 | `direct` | final answer only | Greetings, simple factual questions, short conversational replies |
 | `reasoning` | reasoning + final answer | Analysis, code, comparisons, multi-step questions |
+| `metadata` | project/document metadata facts + final answer | Counts, lists, inventory, project/document info |
 
 **lala CLI:** smart routing is enabled by default. Set `LALA_SMART_ROUTER=0` to disable LLM-based query classification and fall back to the local heuristic.
 
