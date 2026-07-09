@@ -21,22 +21,38 @@
 
 Follow the first-run path below.
 
-### 00 Install Docker Desktop
+### 1. Install Docker Desktop
 
 `lala serve` depends on Docker being available locally. For Windows and macOS users, install Docker Desktop and verify Docker is running before starting `lala`.
 
 > Install Docker Desktop and verify Docker is running.
 
-### 01 Download the Windows binary
+### 2. Create or copy `ai-config.yaml`
 
-Use GitHub Releases as the distribution channel and download the release binary directly.
+Place `ai-config.yaml` into the project directory.
 
-- Download `lala-v1.x.x-windows-amd64.exe` from the latest GitHub Release.
-- Do not rely on browsing the repository source as the primary install path.
+### 3. Download the GGUF model files
 
-### 02 Bring up the local runtime
+Download the GGUF model files you want to use locally.
 
-Run the bundled runtime using the downloaded binary.
+### 4. Set `model_dir`
+
+Edit `ai-config.yaml` and set `model_dir` to the folder containing your downloaded GGUF files.
+
+### 5. Match model paths
+
+Make sure each `work_models[]` entry has a `model_path` that matches the local file name in `model_dir`.
+
+### 6. Download the `lala` binary
+
+Obtain the Windows release binary from GitHub Releases.
+
+- Download `lala-v1.x.x-windows-amd64.exe`
+- Do not make browsing the repository source the primary install path.
+
+### 7. Run `lala serve`
+
+Start the local runtime using the release binary.
 
 ```sh
 lala serve
@@ -44,9 +60,9 @@ lala serve
 
 This starts the local inference layer and PostgreSQL, then prints or persists the connection info.
 
-### 03 Start lala and create a project
+### 8. Run `lala`
 
-The first-run UX should immediately teach the project workflow.
+Launch the CLI client and begin the first-run workflow.
 
 ```sh
 lala
@@ -54,7 +70,7 @@ lala
 /ingest ./docs
 ```
 
-On first run, `lala serve` is the canonical path. The binary path should be the primary onboarding path, not `cargo run`.
+On first run, `lala serve` is the canonical startup path. The binary path should be the primary onboarding experience, not `cargo run`.
 
 ## Quick Commands
 
