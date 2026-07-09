@@ -4,7 +4,7 @@ version: 1
 model_dir: "D:\\models"
 
 # Default work model used when a request does not include "model".
-default_work_model: "mistral-work"
+default_work_model: "qwen-work"
 database:
   user: "lala"
   password: "lala"
