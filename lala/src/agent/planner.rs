@@ -316,7 +316,7 @@ impl<'a> Agent<'a> {
             },
         );
 
-        self.client.chat_stream(&decision_messages, Some(256), None, None)
+        self.client.chat_stream(&decision_messages, Some(1000), None, None)
     }
 
     pub fn run_direct_stream(&self, history: &[ChatMessage], context: Option<&str>) -> anyhow::Result<crate::agent::model::ChatStream> {
