@@ -4,6 +4,9 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 
+const LLML_CONTAINER_NAME: &str = "lala-llml-server";
+const POSTGRES_CONTAINER_NAME: &str = "lala-postgres-server";
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ServeEnv {
     pub api_url: String,
@@ -135,6 +138,8 @@ pub fn start_llml_docker(port: u16, models_dir: &str) -> anyhow::Result<()> {
         .arg("run")
         .arg("-d")
         .arg("--rm")
+        .arg("--name")
+        .arg(LLML_CONTAINER_NAME)
         .arg("-p")
         .arg(&port_mapping)
         .arg("-v")
@@ -165,8 +170,8 @@ pub fn start_postgres_docker(port: u16, user: &str, password: &str, db_name: &st
     let output = Command::new("docker")
         .arg("run")
         .arg("-d")
-        .arg("--rm")
-        .arg("-p")
+        .arg("--rm")        .arg("--name")
+        .arg(POSTGRES_CONTAINER_NAME)        .arg("-p")
         .arg(&port_mapping)
         .arg("-v")
         .arg("lala-postgres-data:/var/lib/postgresql/data")
@@ -190,6 +195,48 @@ pub fn start_postgres_docker(port: u16, user: &str, password: &str, db_name: &st
             stderr
         ))
     }
+}
+
+pub fn stop_docker_containers() -> anyhow::Result<()> {
+    ensure_docker_available()?;
+    let mut stopped_any = false;
+    let mut errors = Vec::new();
+
+    for container in [LLML_CONTAINER_NAME, POSTGRES_CONTAINER_NAME] {
+        let output = Command::new("docker").arg("stop").arg(container).output()?;
+        if output.status.success() {
+            stopped_any = true;
+            continue;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{}{}", stdout, stderr);
+
+        if combined.contains("No such container")
+            || combined.contains("no such container")
+            || combined.contains("is not running")
+            || combined.contains("Error response from daemon") && combined.contains("No such container")
+        {
+            continue;
+        }
+
+        errors.push(format!("Failed to stop {}: {}", container, combined.trim()));
+    }
+
+    if temp_env_file().exists() {
+        let _ = fs::remove_file(temp_env_file());
+    }
+
+    if !errors.is_empty() {
+        return Err(anyhow::anyhow!(errors.join("\n")));
+    }
+
+    if stopped_any {
+        println!("Stopped local LLML serve containers.");
+    }
+
+    Ok(())
 }
 
 pub fn print_serve_instructions(api_url: &str, database_url: &str) {

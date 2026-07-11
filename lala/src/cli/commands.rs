@@ -13,7 +13,8 @@ pub fn dispatch(input: &str, store: &RagStore, client: &ApiClient) -> CommandRes
     let (cmd, args) = split_command(input);
 
     match cmd {
-        "/exit" | "/quit" => CommandResult::Exit,
+        "/exit" => CommandResult::Exit,
+        "/quit" => CommandResult::Quit,
         "/clear" => CommandResult::Clear,
         "/help" => {
             print_help();
@@ -145,6 +146,8 @@ pub enum CommandResult {
     Handled,
     /// User wants to exit.
     Exit,
+    /// User wants to quit and stop any started containers.
+    Quit,
     /// User wants to clear conversation.
     Clear,
     /// Input was not a recognised command — treat as chat.
@@ -227,7 +230,12 @@ fn print_help() {
         display::RESET,
     );
     println!(
-        "  {}/exit{}              Quit",
+        "  {}/exit{}              Quit without stopping Docker containers",
+        display::DIM,
+        display::RESET,
+    );
+    println!(
+        "  {}/quit{}              Quit and stop local LLML/PostgreSQL containers started by lala serve",
         display::DIM,
         display::RESET,
     );

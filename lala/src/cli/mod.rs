@@ -8,6 +8,7 @@ use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 
 use crate::agent::model::ApiClient;
+use crate::llml;
 use rag::RagStore;
 
 use chat::Chat;
@@ -36,6 +37,12 @@ pub fn run(api_url: &str, smart_router: bool, store: RagStore, config: crate::co
         if input.starts_with('/') {
             match commands::dispatch(&input, &store, &client) {
                 CommandResult::Exit => break,
+                CommandResult::Quit => {
+                    if let Err(e) = llml::stop_docker_containers() {
+                        display::warn(&format!("Failed to stop containers: {e}"));
+                    }
+                    break;
+                }
                 CommandResult::Clear => {
                     chat.clear();
                     continue;
