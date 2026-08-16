@@ -2,9 +2,10 @@ use std::fs;
 use std::path::Path;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "pdf", "md", "txt", "rs", "py", "js", "ts", "go", "java", "json", "yaml", "yml", "toml", "xml",
-    "html", "css", "sql",
+    "pdf", "md", "txt"
 ];
+
+// "rs", "py", "js", "ts", "go", "java", "json", "yaml", "yml", "toml", "xml", "html", "css", "sql",
 
 pub fn scan_directory(dir: &str) -> anyhow::Result<Vec<String>> {
     let path = Path::new(dir);

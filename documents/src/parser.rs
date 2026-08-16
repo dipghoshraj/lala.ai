@@ -35,7 +35,10 @@ pub fn parse_text(path: &str, content: &str) -> ParsedDocument {
 }
 
 pub fn parse_pdf(path: &str) -> anyhow::Result<DocumentParseResult> {
-    let markdown = anydoc::to_markdown(path).map_err(anyhow::Error::from)?;
+    let markdown = anydoc::to_markdown(path).map_err(|e: anydoc::ConvertError| match e {
+        anydoc::ConvertError::Malformed { .. } => anyhow::anyhow!("no extractable text: {e}"),
+        _ => anyhow::Error::from(e),
+    })?;
     if markdown.trim().is_empty() {
         anyhow::bail!("no extractable text");
     }
@@ -56,7 +59,7 @@ pub fn parse_document(path: &str) -> anyhow::Result<DocumentParseResult> {
         DocumentFormat::Pdf => parse_pdf(path),
         DocumentFormat::Text => {
             let content = fs::read_to_string(path)?;
-            if content.is_empty() {
+            if content.trim().is_empty() {
                 anyhow::bail!("file is empty");
             }
             let parsed = parse_text(path, &content);
