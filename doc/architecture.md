@@ -8,32 +8,46 @@
 
 ```
 lala.ai/
-├── Cargo.toml              # Workspace root: members = ["lala", "rag"]
+├── Cargo.toml              # Workspace root: members = ["lala", "rag", "documents", "news"]
 ├── ai-config.yaml          # Shared model configuration (read by LLML at startup)
 ├── LLML.Dockerfile         # LLML inference server Docker image (CPU; GPU-ready)
 ├── psql.Dockerfile         # PostgreSQL 18 + pgvector image
 ├── lala/                   # Rust CLI client (binary crate)
-│   ├── Cargo.toml          # deps: reqwest, rustyline, serde, anyhow, rag (path)
+│   ├── Cargo.toml          # deps: reqwest, rustyline, serde, anyhow, documents, news, rag (path)
 │   └── src/
 │   ├── main.rs         # Entry point — resolves API URL, DATABASE_URL, SMART_ROUTER; inits RagStore
 │       ├── cli/
 │       │   ├── mod.rs      # REPL loop, animated banner, command/chat dispatch
 │       │   ├── chat.rs     # Chat struct — history, retrieve+inject context, spinner
 │       │   ├── commands.rs # Command dispatch (/ingest, /search, /memory-search, /ingest-news)
-│       │   ├── ingest.rs   # Batch + single-file + RSS ingestion
+│       │   ├── ingest.rs   # Delegates to documents:: and news:: crates; UI formatting only
 │       │   └── display.rs  # Spinner, ANSI colors, print helpers
 │       └── agent/
 │           ├── mod.rs
 │           ├── model.rs    # ApiClient — HTTP wrapper (chat, classify); RouteDecision enum
 │           └── planner.rs  # Agent — query router, reasoning→decision pipeline
+├── documents/              # Document ingestion library crate
+│   ├── Cargo.toml          # deps: anyhow, rag (path)
+│   └── src/
+│       ├── lib.rs          # Public exports
+│       ├── discovery.rs    # Recursive directory scanning
+│       ├── parser.rs       # File reading and text normalization
+│       ├── ingest.rs       # ingest_file(), callback-based ingest_directory()
+│       └── types.rs        # FileIngestStatus, IngestSummary, ParsedDocument
+├── news/                   # RSS/news ingestion library crate
+│   ├── Cargo.toml          # deps: anyhow, reqwest, rss, regex, urlencoding, rag (path)
+│   └── src/
+│       ├── lib.rs          # Public exports
+│       ├── ingest.rs       # ingest_news_feed(), ingest_news_feed_with_progress()
+│       └── types.rs        # ArticleIngestStatus
 ├── rag/                    # Standalone RAG library crate
-│   ├── Cargo.toml          # deps: postgres, pgvector, uuid (v4), anyhow, reqwest, rss, regex
+│   ├── Cargo.toml          # deps: postgres, pgvector, uuid (v4), anyhow
 │   └── src/
 │       ├── lib.rs          # RagStore, Chunk, EmbeddingSearchResult, MemoryBlock — public API
 │       ├── store.rs        # PostgreSQL FTS + pgvector implementation
 │       ├── migrate.rs      # run_migrations() — idempotent SQL file runner
 │       ├── chunker.rs      # chunk(text, chunk_size, overlap) → Vec<String>
-│       └── news.rs         # ingest_news_feed(store, rss_url, delay_ms) RSS ingestion
+│       └── model/          # Document, chunk, memory block, project SQL models
 ├── migrations/             # SQL files applied in lex order on RagStore::open()
 │   ├── 001_initial_schema.sql  # documents, chunks (tsvector GIN), memory_blocks
 │   └── 002_pgvector.sql        # vector extension + chunk_embeddings (vector(384) IVFFlat)
@@ -80,6 +94,11 @@ graph TD
     RAGCrate["rag/\nRust library crate\nPostgreSQL FTS + pgvector"] -->|"use rag::RagStore"| Lala
     RAGCrate -->|"TCP postgres"| DB
     Lala -->|"retrieve → inject context"| RAGCrate
+
+    DocsCrate["documents/\nRust library crate\nfile discovery + parsing"] -->|"ingest into"| RAGCrate
+    NewsCrate["news/\nRust library crate\nRSS fetch + article extract"] -->|"ingest into"| RAGCrate
+    Lala -->|"/ingest, /ingest-file"| DocsCrate
+    Lala -->|"/ingest-news"| NewsCrate
 
     DB[("PostgreSQL + pgvector\n:5432\ndocker-compose db service")]
 ```

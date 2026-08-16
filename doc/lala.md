@@ -7,7 +7,13 @@
 
 ## Overview
 
-`lala` is the front-end of the system. It owns the user experience: readline input, multi-turn conversation history, a spinner animation during inference, folder-based document ingestion, RSS news ingestion, BM25 keyword search, structured memory block search, and clean error recovery. It has no direct knowledge of the model — all LLM communication goes through HTTP to the LLML server.
+`lala` is the front-end of the system. It owns the user experience: readline input, multi-turn conversation history, a spinner animation during inference, command dispatch for document/news ingestion, BM25 keyword search, structured memory block search, and clean error recovery. It has no direct knowledge of the model — all LLM communication goes through HTTP to the LLML server.
+
+Ingestion is delegated to two dedicated library crates:
+- `documents` — file discovery, parsing, and batch/single-file ingestion
+- `news` — RSS feed fetching, article extraction, and news ingestion
+
+Both crates call into `rag::RagStore` for storage; the CLI only formats and displays progress/summaries.
 
 RAG context is automatically retrieved on **every** query (both direct and reasoning paths) and injected into the model prompt as retrieved context, up to a 800-token budget.
 
@@ -16,7 +22,7 @@ User (terminal)
       │
   rustyline REPL  →  command dispatch (/ingest, /ingest-news, /search, /memory-search, ...)
       │                         │
-      │                    rag::RagStore  ──►  PostgreSQL FTS + pgvector + memory_blocks
+      │              documents:: / news:: ──► rag::RagStore ──► PostgreSQL FTS + pgvector + memory_blocks
       │
   conversation history (in-memory)
       │
@@ -42,7 +48,7 @@ lala/src/
     mod.rs             # REPL loop, animated banner, command/chat dispatch
     chat.rs            # Chat struct — history, classify→route, retrieve_context→inject, spinner
     commands.rs        # Command dispatch (/help, /status, /search, /memory-search, /ingest, /ingest-news, /clear, /exit)
-    ingest.rs          # Batch + single-file + RSS news ingestion with progress output
+    ingest.rs          # Delegates to documents:: and news:: crates; UI formatting only
     display.rs         # Spinner, ANSI colours, print_section(), print_sources(), info/success/warn/error helpers
   agent/
     mod.rs
@@ -124,7 +130,7 @@ Before ingesting, create or select a project with `/project create --name <name>
 
 Use `Plan: <query>` to run a dedicated planning pass that is only available when a project is selected. This mode retrieves project-specific RAG context and asks the model to produce a planning response instead of directly answering the query.
 
-Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. Each file is read, chunked into 512-character overlapping windows (64-char overlap), and stored in PostgreSQL with FTS-enabled chunk indexing and auto-extracted memory blocks. Duplicate files (same source path) are skipped. Progress and a summary are displayed:
+Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. The `documents` crate discovers files, reads them, and delegates storage to `rag::RagStore`, which chunks text into 512-character overlapping windows (64-char overlap) and stores them in PostgreSQL with FTS-enabled chunk indexing and auto-extracted memory blocks. Duplicate files (same source path) are reingested and reported as updated. Progress and a summary are displayed:
 
 ```
 >> /ingest
@@ -136,7 +142,7 @@ Place files in the `./ingest/` directory and run `/ingest` to batch-process all 
   [3/3] notes.txt
   ⚠ notes.txt: Already ingested: ./ingest/notes.txt
   ────────────────────────────────────────────────────────────
-  Ingested: 2  Skipped: 1  Failed: 0  Chunks: 20
+  Ingested: 2  Updated: 0  Skipped: 1  Failed: 0  Chunks: 20
   ────────────────────────────────────────────────────────────
 ```
 
@@ -144,7 +150,7 @@ For one-off files outside the ingest directory, use `/ingest-file <path>`.
 
 **RSS News Ingestion**
 
-Fetch an RSS feed and automatically ingest all linked articles:
+The `news` crate fetches an RSS feed and automatically ingests all linked articles:
 
 ```
 >> /ingest-news https://feeds.bbci.co.uk/news/rss.xml

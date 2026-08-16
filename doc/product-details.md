@@ -144,11 +144,14 @@ lala.ai/
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs         # Entry point — resolves API URL + smart-router flag
-│       ├── cli.rs          # REPL loop, spinner, conversation history
+│       ├── cli/            # REPL loop, commands, display helpers
 │       └── agent/
 │           ├── mod.rs
 │           ├── model.rs    # ApiClient — HTTP wrapper (chat, classify)
 │           └── planner.rs  # Agent — query router + reasoning→decision pipeline
+├── documents/              # Rust library crate — file/document ingestion
+├── news/                   # Rust library crate — RSS/news ingestion
+├── rag/                    # Rust library crate — RAG storage and retrieval
 ├── LLML/                   # Python inference server
 │   ├── main.py             # Entry point — loads config, starts uvicorn on :3000
 │   ├── config.py           # Deserializes ai-config.yaml
@@ -170,9 +173,18 @@ flowchart TD
     User(["👤 User\nstdin / rustyline"])
 
     subgraph lala ["lala — Rust CLI"]
-        CLI["cli.rs\nREPL loop · LALA_SMART_ROUTER"]
+        CLI["cli/\nREPL loop · LALA_SMART_ROUTER"]
         Planner["agent/planner.rs\nclassify_query()\nrun_direct() | run_reasoning()+run_decision()"]
         ApiClient["agent/model.rs\nApiClient\nreqwest::blocking"]
+    end
+
+    subgraph ingestion ["Ingestion crates"]
+        DocumentsCrate["documents::\nfile discovery + parsing"]
+        NewsCrate["news::\nRSS fetch + article extract"]
+    end
+
+    subgraph rag ["RAG crate"]
+        RagStore["rag::RagStore\nPostgreSQL FTS + pgvector"]
     end
 
     subgraph LLML ["LLML — Python/FastAPI :3000"]
@@ -192,6 +204,11 @@ flowchart TD
     Routes --> Runner
     Runner -->|"llama-cpp-python FFI"| GGUF
     Config -->|"read on startup"| LLML
+
+    CLI -->|"/ingest, /ingest-file"| DocumentsCrate
+    CLI -->|"/ingest-news"| NewsCrate
+    DocumentsCrate --> RagStore
+    NewsCrate --> RagStore
 
 ```
 
