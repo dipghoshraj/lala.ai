@@ -27,11 +27,11 @@ lala.ai/
 │           ├── model.rs    # ApiClient — HTTP wrapper (chat, classify); RouteDecision enum
 │           └── planner.rs  # Agent — query router, reasoning→decision pipeline
 ├── documents/              # Document ingestion library crate
-│   ├── Cargo.toml          # deps: anyhow, rag (path)
+│   ├── Cargo.toml          # deps: anyhow, anydoc, rag (path)
 │   └── src/
 │       ├── lib.rs          # Public exports
 │       ├── discovery.rs    # Recursive directory scanning
-│       ├── parser.rs       # File reading and text normalization
+│       ├── parser.rs       # File reading, format detection, PDF→Markdown conversion, text normalization
 │       ├── ingest.rs       # ingest_file(), callback-based ingest_directory()
 │       └── types.rs        # FileIngestStatus, IngestSummary, ParsedDocument
 ├── news/                   # RSS/news ingestion library crate
@@ -95,7 +95,7 @@ graph TD
     RAGCrate -->|"TCP postgres"| DB
     Lala -->|"retrieve → inject context"| RAGCrate
 
-    DocsCrate["documents/\nRust library crate\nfile discovery + parsing"] -->|"ingest into"| RAGCrate
+    DocsCrate["documents/\nRust library crate\nfile discovery + parsing\n(PDF → Markdown via anydoc)"] -->|"ingest into"| RAGCrate
     NewsCrate["news/\nRust library crate\nRSS fetch + article extract"] -->|"ingest into"| RAGCrate
     Lala -->|"/ingest, /ingest-file"| DocsCrate
     Lala -->|"/ingest-news"| NewsCrate

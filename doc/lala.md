@@ -130,7 +130,7 @@ Before ingesting, create or select a project with `/project create --name <name>
 
 Use `Plan: <query>` to run a dedicated planning pass that is only available when a project is selected. This mode retrieves project-specific RAG context and asks the model to produce a planning response instead of directly answering the query.
 
-Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. The `documents` crate discovers files, reads them, and delegates storage to `rag::RagStore`, which chunks text into 512-character overlapping windows (64-char overlap) and stores them in PostgreSQL with FTS-enabled chunk indexing and auto-extracted memory blocks. Duplicate files (same source path) are reingested and reported as updated. Progress and a summary are displayed:
+Place files in the `./ingest/` directory and run `/ingest` to batch-process all of them. The `documents` crate discovers files, detects format by extension, parses them (PDFs are converted to Markdown via `anydoc`), and delegates storage to `rag::RagStore`, which chunks text into 512-character overlapping windows (64-char overlap) and stores them in PostgreSQL with FTS-enabled chunk indexing and auto-extracted memory blocks. Duplicate files (same source path) are reingested and reported as updated. Files with no extractable text (empty or whitespace-only text files, scanned/image-only PDFs) are reported as skipped instead of failed. Progress and a summary are displayed:
 
 ```
 >> /ingest

@@ -28,8 +28,8 @@ It routes questions through a direct answer path for simple queries, or a reason
 - `/project deselect` : clear the selected project and use the LLM directly
 - `/project list` : list available projects
 - `/project current` : show the currently selected project
-- `/ingest [dir]`       : batch ingest text/docs from directory (default `./ingest/`)
-- `/ingest-file <path>` : ingest a single file
+- `/ingest [dir]`       : batch ingest text/docs/PDFs from directory (default `./ingest/`)
+- `/ingest-file <path>` : ingest a single file (text, Markdown, PDF, etc.)
 - `/ingest-news <url>`  : ingest RSS articles
 - `/search <query>`     : search document memory with BM25
 - `/memory-search <query>` : search structured memory blocks
@@ -179,7 +179,7 @@ flowchart TD
     end
 
     subgraph ingestion ["Ingestion crates"]
-        DocumentsCrate["documents::\nfile discovery + parsing"]
+        DocumentsCrate["documents::\nfile discovery + parsing\nPDF → Markdown via anydoc"]
         NewsCrate["news::\nRSS fetch + article extract"]
     end
 
