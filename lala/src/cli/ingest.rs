@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::agent::model::ApiClient;
 use documents;
+use news;
 use rag::{model::document, RagStore};
 
 use super::display;
@@ -194,7 +195,7 @@ pub fn ingest_news(store: &RagStore, url: &str) {
     display::info(&format!("Ingesting news from: {}", url));
     println!();
 
-    match rag::ingest_news_feed(store, url, 1000) {
+    match news::ingest_news_feed(store, url, 1000) {
         Ok((ingested, skipped, failed)) => {
             println!();
             let sep = "─".repeat(display::SECTION_WIDTH);

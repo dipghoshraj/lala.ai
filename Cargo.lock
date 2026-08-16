@@ -858,6 +858,7 @@ dependencies = [
  "colored",
  "documents",
  "figlet-rs",
+ "news",
  "rag",
  "reqwest",
  "rustyline",
@@ -969,6 +970,18 @@ name = "never"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c96aba5aa877601bb3f6dd6a63a969e1f82e60646e81e71b14496995e9853c91"
+
+[[package]]
+name = "news"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rag",
+ "regex",
+ "reqwest",
+ "rss",
+ "urlencoding",
+]
 
 [[package]]
 name = "nibble_vec"
