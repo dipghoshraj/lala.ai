@@ -13,6 +13,7 @@ serde_yaml = "0.9"
 figlet-rs = "0.1.5"
 colored = "3.1.1"
 
+documents = { path = "../documents" }
 rag = { path = "../rag" }
 
 [build-dependencies]

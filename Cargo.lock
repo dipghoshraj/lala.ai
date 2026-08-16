@@ -316,6 +316,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "documents"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rag",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -848,6 +856,7 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "colored",
+ "documents",
  "figlet-rs",
  "rag",
  "reqwest",

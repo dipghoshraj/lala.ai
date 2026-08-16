@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::agent::model::ApiClient;
+use documents;
 use rag::{model::document, RagStore};
 
 use super::display;
@@ -167,13 +168,8 @@ fn ingest_single_file(store: &RagStore, _client: &ApiClient, path: &str) -> Inge
         return IngestResult::Skipped("file is empty".to_string());
     }
 
-    let title = Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string());
-
     let replaced = document::Document::exist(path).unwrap_or(false);
-    match store.ingest(&title, path, &content) {
+    match documents::ingest_file(store, path) {
         Ok(count) => {
             if replaced {
                 IngestResult::Updated(count)
