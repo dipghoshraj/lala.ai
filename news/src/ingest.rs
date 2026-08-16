@@ -6,16 +6,29 @@ use std::time::Duration;
 
 use rag::RagStore;
 
+use crate::types::ArticleIngestStatus;
+
 pub fn ingest_news_feed(
     store: &RagStore,
     rss_url: &str,
     delay_ms: u64,
 ) -> Result<(usize, usize, usize)> {
+    ingest_news_feed_with_progress(store, rss_url, delay_ms, |_title, _status| {} )
+}
+
+pub fn ingest_news_feed_with_progress<F>(
+    store: &RagStore,
+    rss_url: &str,
+    delay_ms: u64,
+    mut on_article: F,
+) -> Result<(usize, usize, usize)>
+where
+    F: FnMut(&str, &ArticleIngestStatus),
+{
     let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()?;
 
-    eprintln!("Fetching RSS feed: {}", rss_url);
     let resp = client.get(rss_url).send()?;
     let feed_content = resp.text()?;
     let channel = Channel::read_from(feed_content.as_bytes())?;
@@ -24,28 +37,27 @@ pub fn ingest_news_feed(
     let mut skipped = 0usize;
     let mut failed = 0usize;
 
-    for (idx, item) in channel.items.iter().enumerate() {
+    for item in channel.items.iter() {
         let title = item.title().unwrap_or("(no title)");
         let link = match item.link() {
             Some(l) => l,
             None => {
-                eprintln!("[{}] Skipped (no link): {}", idx + 1, title);
+                on_article(title, &ArticleIngestStatus::Skipped("no link"));
                 skipped += 1;
                 continue;
             }
         };
 
-        eprintln!("[{}] Processing: {}", idx + 1, title);
+        let status = match fetch_and_ingest_article(&client, store, title, link) {
+            Ok(_) => ArticleIngestStatus::Ingested,
+            Err(e) => ArticleIngestStatus::Failed(e.to_string()),
+        };
 
-        match fetch_and_ingest_article(&client, store, title, link) {
-            Ok(_) => {
-                eprintln!("  ✓ Ingested");
-                ingested += 1;
-            }
-            Err(e) => {
-                eprintln!("  ✗ Failed: {}", e);
-                failed += 1;
-            }
+        on_article(title, &status);
+        match &status {
+            ArticleIngestStatus::Ingested => ingested += 1,
+            ArticleIngestStatus::Skipped(_) => skipped += 1,
+            ArticleIngestStatus::Failed(_) => failed += 1,
         }
 
         thread::sleep(Duration::from_millis(delay_ms));
@@ -54,7 +66,7 @@ pub fn ingest_news_feed(
     Ok((ingested, skipped, failed))
 }
 
-pub fn fetch_and_ingest_article(
+fn fetch_and_ingest_article(
     client: &Client,
     store: &RagStore,
     title: &str,
@@ -67,7 +79,6 @@ pub fn fetch_and_ingest_article(
         .send()
     {
         Ok(resp) if resp.status().as_u16() == 403 => {
-            eprintln!("    403 from {}, trying proxy...", url);
             let proxy_url = format!(
                 "https://api.allorigins.win/raw?url={}",
                 urlencoding::encode(url)

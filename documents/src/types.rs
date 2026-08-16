@@ -19,3 +19,20 @@ pub struct DocumentInput {
     pub source: String,
     pub content: String,
 }
+
+#[derive(Debug, Clone)]
+pub enum FileIngestStatus {
+    New(usize),
+    Updated(usize),
+    Skipped(String),
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IngestSummary {
+    pub ingested: usize,
+    pub updated: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub chunks: usize,
+}

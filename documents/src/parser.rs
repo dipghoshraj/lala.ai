@@ -12,12 +12,15 @@ pub fn parse_text(path: &str, content: &str) -> ParsedDocument {
     ParsedDocument {
         title,
         source: path.to_string(),
-        content: content.trim().to_string(),
+        content: content.to_string(),
     }
 }
 
 pub fn parse_document(path: &str) -> anyhow::Result<DocumentParseResult> {
     let content = fs::read_to_string(path)?;
+    if content.is_empty() {
+        anyhow::bail!("file is empty");
+    }
     let parsed = parse_text(path, &content);
 
     Ok(DocumentParseResult {

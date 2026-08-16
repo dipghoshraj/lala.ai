@@ -1270,10 +1270,6 @@ dependencies = [
  "anyhow",
  "pgvector",
  "postgres",
- "regex",
- "reqwest",
- "rss",
- "urlencoding",
  "uuid",
 ]
 
