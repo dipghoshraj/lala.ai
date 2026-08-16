@@ -13,6 +13,9 @@ pub fn ingest_file(store: &RagStore, path: &str) -> FileIngestStatus {
             if reason.contains("file is empty") {
                 return FileIngestStatus::Skipped("file is empty".to_string());
             }
+            if reason.contains("no extractable text") {
+                return FileIngestStatus::Skipped("no extractable text".to_string());
+            }
             return FileIngestStatus::Failed(format!("cannot read file: {e}"));
         }
     };
@@ -31,7 +34,11 @@ pub fn ingest_file(store: &RagStore, path: &str) -> FileIngestStatus {
     }
 }
 
-pub fn ingest_directory<F>(store: &RagStore, dir: &str, mut on_file: F) -> anyhow::Result<IngestSummary>
+pub fn ingest_directory<F>(
+    store: &RagStore,
+    dir: &str,
+    mut on_file: F,
+) -> anyhow::Result<IngestSummary>
 where
     F: FnMut(usize, usize, &str, &FileIngestStatus),
 {
