@@ -23,13 +23,13 @@ The public `RagStore` API is stable across phases — only the backing SQL chang
 
 ```
 rag/
-├── Cargo.toml             # deps: postgres, pgvector, uuid, anyhow, reqwest, rss, regex
+├── Cargo.toml             # deps: postgres, pgvector, uuid, anyhow
 └── src/
     ├── lib.rs             # Public API: RagStore, Chunk, EmbeddingSearchResult, MemoryBlock
     ├── store.rs           # PostgreSQL implementation of all RagStore methods
     ├── migrate.rs         # run_migrations() — idempotent SQL file runner
     ├── chunker.rs         # chunk(text, size, overlap) -> Vec<String>
-    └── news.rs            # ingest_news_feed(store, rss_url, delay_ms)
+    └── model/             # Document, chunk, memory block, project SQL models
 ```
 
 ### Dependencies
@@ -40,9 +40,6 @@ rag/
 | `pgvector` (postgres feature) | ~0.4 | `Vector` type for `vector(384)` column; `<=>` cosine operator |
 | `uuid` | ~1.0 | Document / chunk ID generation (v4 random) |
 | `anyhow` | ~1.0 | Error propagation via `?` |
-| `reqwest` (blocking) | ~0.12 | HTTP client for RSS fetching and CORS fallback |
-| `rss` | ~2.0 | RSS feed parsing |
-| `regex` | ~1.0 | HTML tag stripping, URL dedup |
 
 ---
 

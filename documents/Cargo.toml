@@ -1,0 +1,9 @@
+[package]
+name = "documents"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+anydoc = "0.1.9"
+rag = { path = "../rag" }
